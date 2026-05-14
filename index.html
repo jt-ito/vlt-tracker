@@ -1,0 +1,3548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manga List</title>
+  <style>
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --surface2: #22222f;
+      --surface3: #2a2a3a;
+      --accent: #7c6af7;
+      --accent2: #a78bfa;
+      --accent-glow: rgba(124, 106, 247, 0.25);
+      --text: #e8e8f0;
+      --text-muted: #8888aa;
+      --border: #333348;
+      --reading: #22c55e;
+      --planning: #3b82f6;
+      --dropped: #ef4444;
+      --completed: #a78bfa;
+      --paused: #f59e0b;
+      --rereading: #06b6d4;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+
+    .logo {
+      font-size: 1.4rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.5px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      border: none;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #6b5ae0; box-shadow: 0 0 16px var(--accent-glow); }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+    .btn-ghost:hover { background: var(--surface2); color: var(--text); }
+
+    .btn-icon {
+      padding: 8px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 1rem;
+      line-height: 1;
+    }
+    .btn-icon:hover { background: var(--surface2); color: var(--text); }
+    .btn-icon.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    /* ── Layout ── */
+    .app-body {
+      display: flex;
+      height: calc(100vh - 60px);
+    }
+
+    /* ── Sidebar ── */
+    aside {
+      width: 220px;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 20px 12px;
+      flex-shrink: 0;
+      overflow-y: auto;
+    }
+
+    .sidebar-section { margin-bottom: 24px; }
+
+    .sidebar-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      padding: 0 8px;
+    }
+
+    .filter-btn {
+      width: 100%;
+      text-align: left;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.875rem;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .filter-btn:hover { background: var(--surface2); color: var(--text); }
+    .filter-btn.active { background: var(--accent-glow); color: var(--accent2); font-weight: 600; }
+
+    .filter-left { display: flex; align-items: center; gap: 8px; }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .badge {
+      font-size: 0.7rem;
+      background: var(--surface3);
+      color: var(--text-muted);
+      padding: 2px 6px;
+      border-radius: 99px;
+      min-width: 20px;
+      text-align: center;
+    }
+
+    /* ── Main content ── */
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .search-wrap {
+      flex: 1;
+      min-width: 200px;
+      position: relative;
+    }
+
+    .search-wrap input {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px 8px 36px;
+      color: var(--text);
+      font-size: 0.875rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-wrap input:focus { border-color: var(--accent); }
+    .search-wrap .search-icon {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      pointer-events: none;
+    }
+
+    .view-toggles { display: flex; gap: 4px; }
+
+    /* ── Tag filter panel ── */
+    .tag-filter-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 7px 11px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.82rem;
+      white-space: nowrap;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .tag-filter-btn:hover, .tag-filter-btn.active { border-color: var(--accent); color: var(--accent2); }
+    .tag-filter-btn .tf-badge {
+      background: var(--accent);
+      color: #fff;
+      border-radius: 99px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      padding: 1px 6px;
+      min-width: 18px;
+      text-align: center;
+    }
+    .tag-filter-panel {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .tag-filter-panel.hidden { display: none; }
+    .tf-pill {
+      padding: 3px 11px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.75rem;
+      white-space: nowrap;
+      user-select: none;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .tf-pill:hover { border-color: var(--accent); color: var(--accent2); }
+    .tf-pill.include {
+      background: rgba(74,222,128,0.15);
+      border-color: #4ade80;
+      color: #4ade80;
+      font-weight: 600;
+    }
+    .tf-pill.exclude {
+      background: rgba(248,113,113,0.15);
+      border-color: #f87171;
+      color: #f87171;
+      font-weight: 600;
+    }
+    .tf-clear-pill {
+      padding: 3px 10px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.72rem;
+      white-space: nowrap;
+      margin-left: 4px;
+    }
+    .tf-clear-pill:hover { border-color: #f87171; color: #f87171; }
+
+    /* ── Entry cards (list) ── */
+    .entries-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .entry-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      cursor: pointer;
+    }
+    .entry-card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    .entry-thumb-sm {
+      width: 42px;
+      height: 60px;
+      border-radius: 6px;
+      background: var(--surface3);
+      overflow: hidden;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+    }
+    .entry-thumb-sm img { width: 100%; height: 100%; object-fit: cover; }
+
+    .entry-info { flex: 1; min-width: 0; }
+
+    .entry-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .entry-author {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .entry-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+
+    .status-pill {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 99px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .progress-text {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .entry-link {
+      font-size: 0.75rem;
+      color: var(--accent2);
+      text-decoration: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
+      display: inline-block;
+    }
+    .entry-link:hover { text-decoration: underline; }
+
+    .entry-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .btn-site {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      width: 56px;
+      height: 56px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.6rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-decoration: none;
+      flex-shrink: 0;
+      padding: 0;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .btn-site:hover { border-color: var(--accent); color: var(--accent2); background: rgba(124,106,247,0.08); }
+    .btn-site .site-logo {
+      width: 26px;
+      height: 26px;
+      object-fit: contain;
+      display: block;
+      border-radius: 5px;
+    }
+    .btn-site .site-label { font-size: 0.58rem; line-height: 1; }
+    .entry-site-btns {
+      display: flex;
+      gap: 5px;
+      flex-shrink: 0;
+      align-items: center;
+    }
+
+    /* ── Lookup log panel ── */
+    .lookup-log {
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%) translateY(100%);
+      width: min(500px, 96vw);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: 14px 14px 0 0;
+      box-shadow: 0 -6px 32px rgba(0,0,0,0.5);
+      z-index: 3000;
+      transition: transform 0.35s cubic-bezier(0.34,1.26,0.64,1);
+      overflow: hidden;
+    }
+    .lookup-log.open {
+      transform: translateX(-50%) translateY(0);
+    }
+    .lookup-log-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      user-select: none;
+    }
+    .lookup-log-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      cursor: pointer;
+      line-height: 1;
+      padding: 0 2px;
+    }
+    .lookup-log-close:hover { color: var(--text); }
+    .lookup-log-body {
+      padding: 10px 14px 14px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 0.78rem;
+      font-family: ui-monospace, monospace;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .log-line { color: var(--text-muted); }
+    .log-line.ok  { color: #4ade80; }
+    .log-line.err { color: #f87171; }
+    .log-line.info { color: var(--accent2); font-weight: 600; }
+
+    /* ── Grid / Thumbnail views ── */
+    .entries-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 16px;
+    }
+
+    .entry-grid-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .entry-grid-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .entry-thumb-lg {
+      width: 100%;
+      height: 220px;
+      background: var(--surface3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+      position: relative;
+    }
+    .entry-thumb-lg img { width: 100%; height: 100%; object-fit: cover; }
+
+    .thumb-status {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 99px;
+      text-transform: uppercase;
+    }
+
+    .entry-grid-info {
+      padding: 10px 12px;
+    }
+
+    .entry-grid-title {
+      font-weight: 600;
+      font-size: 0.85rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .entry-grid-author {
+      font-size: 0.73rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .entry-grid-progress {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* ── Links view ── */
+    .entries-links { display: flex; flex-direction: column; gap: 6px; }
+
+    .entry-link-row {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .entry-link-row:hover { border-color: var(--accent); }
+
+    .link-main { flex: 1; min-width: 0; }
+    .link-title {
+      font-weight: 500;
+      font-size: 0.875rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .link-title a {
+      color: var(--text);
+      text-decoration: none;
+    }
+    .link-title a:hover { color: var(--accent2); text-decoration: underline; }
+
+    .link-url {
+      display: block;
+      margin-top: 2px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .link-url:hover { color: var(--accent2); text-decoration: underline; }
+
+    .no-link { color: var(--text-muted); font-style: italic; font-size: 0.8rem; }
+
+    /* ── Batch import ── */
+    .batch-textarea {
+      width: 100%; height: 180px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.82rem;
+      padding: 10px 12px;
+      resize: vertical;
+      font-family: 'Consolas', 'Courier New', monospace;
+      box-sizing: border-box;
+      line-height: 1.5;
+    }
+    .batch-textarea:focus { border-color: var(--accent); outline: none; }
+    .batch-options { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; }
+    .batch-options .field { flex: 1; min-width: 140px; }
+    .batch-progress-bar {
+      height: 6px; background: var(--surface3); border-radius: 99px;
+      overflow: hidden; margin-bottom: 6px;
+    }
+    .batch-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 99px;
+      transition: width 0.3s;
+      width: 0%;
+    }
+    .batch-progress-text { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px; }
+    .batch-log {
+      max-height: 260px; overflow-y: auto;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 0.78rem;
+      display: flex; flex-direction: column; gap: 5px;
+    }
+    .batch-log-item { display: flex; gap: 8px; align-items: flex-start; line-height: 1.45; }
+    .batch-log-icon { flex-shrink: 0; font-size: 0.9rem; }
+    .batch-log-text { color: var(--text-muted); word-break: break-all; }
+    .batch-log-text strong { color: var(--text); font-weight: 500; }
+
+    /* ── Compact list view ── */
+    .entries-compact { display: flex; flex-direction: column; }
+
+    .entry-compact-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background 0.15s;
+      border-bottom: 1px solid var(--border);
+    }
+    .entry-compact-row:last-child { border-bottom: none; }
+    .entry-compact-row:hover { background: var(--surface); }
+
+    .compact-title { flex: 1; font-size: 0.875rem; font-weight: 500; }
+    .compact-author { width: 160px; font-size: 0.8rem; color: var(--text-muted); }
+    .compact-status { width: 90px; }
+    .compact-progress { width: 110px; font-size: 0.78rem; color: var(--text-muted); text-align: right; }
+
+    /* ── Empty state ── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 20px;
+      color: var(--text-muted);
+      gap: 12px;
+      text-align: center;
+    }
+    .empty-icon { font-size: 3.5rem; }
+    .empty-title { font-size: 1.2rem; font-weight: 600; color: var(--text); }
+    .empty-sub { font-size: 0.875rem; }
+
+    /* ── Modal ── */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-backdrop.hidden { display: none; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: 100%;
+      max-width: 560px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    }
+
+    .modal-header {
+      padding: 20px 24px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .modal-title { font-size: 1.1rem; font-weight: 700; }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.2rem;
+      line-height: 1;
+      padding: 4px;
+      border-radius: 6px;
+      transition: color 0.15s;
+    }
+    .modal-close:hover { color: var(--text); }
+
+    .modal-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+
+    .field label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus { border-color: var(--accent); }
+
+    .themed-input {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+    .themed-input:focus { border-color: var(--accent); }
+
+    .field select option { background: var(--surface2); }
+    .field textarea { resize: vertical; min-height: 80px; }
+
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    /* Progress section */
+    .progress-section { display: flex; flex-direction: column; gap: 10px; }
+
+    .progress-type-toggle {
+      display: flex;
+      background: var(--surface2);
+      border-radius: var(--radius-sm);
+      padding: 3px;
+      gap: 3px;
+    }
+
+    .progress-type-btn {
+      flex: 1;
+      padding: 6px 12px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .progress-type-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .progress-warning {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-size: 0.78rem;
+      color: #f59e0b;
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    .progress-warning.hidden { display: none; }
+
+    .progress-inputs { display: flex; gap: 10px; }
+    .progress-inputs .field { flex: 1; }
+
+    /* Thumbnail URL field */
+    .thumb-preview {
+      width: 60px;
+      height: 84px;
+      border-radius: 8px;
+      background: var(--surface3);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.8rem;
+      flex-shrink: 0;
+    }
+    .thumb-preview img { width: 100%; height: 100%; object-fit: cover; }
+    .thumb-row { display: flex; align-items: center; gap: 12px; }
+    .thumb-row .field { flex: 1; }
+
+    .modal-footer {
+      padding: 16px 24px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Status colors ── */
+    .s-reading    { background: rgba(34,197,94,0.15); color: var(--reading); }
+    .s-planning   { background: rgba(59,130,246,0.15); color: var(--planning); }
+    .s-dropped    { background: rgba(239,68,68,0.15);  color: var(--dropped); }
+    .s-completed  { background: rgba(167,139,250,0.15);color: var(--completed); }
+    .s-paused     { background: rgba(245,158,11,0.15); color: var(--paused); }
+    .s-rereading  { background: rgba(6,182,212,0.15);  color: var(--rereading); }
+
+    /* dot colors */
+    .d-reading   { background: var(--reading); }
+    .d-planning  { background: var(--planning); }
+    .d-dropped   { background: var(--dropped); }
+    .d-completed { background: var(--completed); }
+    .d-paused    { background: var(--paused); }
+    .d-rereading { background: var(--rereading); }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      aside { display: none; }
+      .compact-author, .compact-progress { display: none; }
+    }
+
+    /* Delete confirmation */
+    .danger { color: #ef4444; border-color: #ef4444; }
+    .danger:hover { background: rgba(239,68,68,0.1); }
+
+    /* Notes preview in card */
+    .notes-preview {
+      font-size: 0.73rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+      font-style: italic;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 400px;
+    }
+
+    /* Tags */
+    .tag-pill {
+      display: inline-block;
+      font-size: 0.67rem;
+      padding: 2px 8px;
+      border-radius: 20px;
+      background: rgba(139,92,246,0.12);
+      color: #a78bfa;
+      border: 1px solid rgba(139,92,246,0.25);
+      white-space: nowrap;
+    }
+    .entry-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 5px;
+    }
+    .import-result-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .field .tags-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+      min-height: 10px;
+    }
+    .tag-pill-rm {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.67rem;
+      padding: 2px 6px 2px 8px;
+      border-radius: 20px;
+      background: rgba(139,92,246,0.12);
+      color: #a78bfa;
+      border: 1px solid rgba(139,92,246,0.25);
+      white-space: nowrap;
+      cursor: default;
+    }
+    .tag-pill-rm .rm-x {
+      font-size: 0.75rem;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0.6;
+      padding: 0 1px;
+    }
+    .tag-pill-rm .rm-x:hover { opacity: 1; }
+    .tags-empty { font-size: 0.78rem; color: var(--text-muted); font-style: italic; }
+
+    .count-display {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+
+    /* ── Split Button ── */
+    .split-btn-group {
+      position: relative;
+      display: flex;
+      align-items: stretch;
+    }
+    .split-main {
+      border-radius: var(--radius-sm) 0 0 var(--radius-sm) !important;
+    }
+    .split-arrow {
+      padding: 8px 10px !important;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-left: 1px solid rgba(255,255,255,0.22) !important;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.2s;
+    }
+    .split-arrow:hover { background: #6b5ae0; box-shadow: 0 0 16px var(--accent-glow); }
+
+    .import-dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      min-width: 195px;
+      z-index: 300;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    }
+    .import-dropdown.hidden { display: none; }
+
+    .import-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      transition: background 0.15s;
+      border: none;
+      background: none;
+      color: var(--text);
+      width: 100%;
+      text-align: left;
+    }
+    .import-menu-item:hover { background: var(--surface3); }
+    .import-menu-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 0;
+    }
+
+    /* Settings */
+    .settings-section { margin-bottom: 20px; }
+    .settings-section-title {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .settings-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-label { font-size: 0.875rem; }
+    .settings-desc { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+    .settings-row select {
+      background: var(--surface3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.85rem;
+      padding: 5px 10px;
+      cursor: pointer;
+      min-width: 160px;
+    }
+    /* Toggle switch */
+    .toggle { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-track {
+      position: absolute; cursor: pointer; inset: 0;
+      background: var(--surface3); border: 1px solid var(--border); border-radius: 22px;
+      transition: background 0.18s, border-color 0.18s;
+    }
+    .toggle-track::before {
+      content: ''; position: absolute;
+      width: 15px; height: 15px; left: 3px; top: 3px;
+      background: var(--text-muted); border-radius: 50%;
+      transition: transform 0.18s, background 0.18s;
+    }
+    .toggle input:checked + .toggle-track { background: var(--accent); border-color: var(--accent); }
+    .toggle input:checked + .toggle-track::before { transform: translateX(16px); background: #fff; }
+
+    /* ── Import modal extras ── */
+    .import-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--surface2);
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .import-status.hidden { display: none; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .import-spinner {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+
+    .import-result {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      background: var(--surface2);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .import-result.hidden { display: none; }
+    .import-result-thumb {
+      width: 48px; height: 68px;
+      border-radius: 6px;
+      background: var(--surface3);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      flex-shrink: 0;
+    }
+    .import-result-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .import-result-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; }
+    .import-result-author { font-size: 0.78rem; color: var(--text-muted); }
+    .import-hint {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      line-height: 1.55;
+      padding: 2px 0;
+    }
+
+    /* ── CF in-app iframe panel ── */
+    .cf-panel-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      z-index: 250;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .cf-panel-backdrop.hidden { display: none; }
+
+    .cf-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: 100%;
+      max-width: 1140px;
+      height: 88vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    }
+
+    .cf-panel-header {
+      padding: 14px 20px;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      gap: 12px;
+    }
+    .cf-panel-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #f59e0b;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .cf-panel-subtitle {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 3px;
+      line-height: 1.5;
+    }
+
+    .cf-panel-body {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    webview#cfWebview {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* ── Dupe warning ── */
+    .dupe-warning {
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 0.82rem;
+    }
+    .dupe-warning.hidden { display: none; }
+    .dupe-info { display: flex; flex-direction: column; gap: 3px; }
+    .dupe-info strong { color: #fca5a5; font-size: 0.83rem; }
+    .dupe-info span { color: var(--text-muted); font-size: 0.78rem; }
+  </style>
+</head>
+<body>
+
+<!-- ══ Header ══ -->
+<header>
+  <span class="logo">📚 MangaList</span>
+  <div class="header-actions">
+    <button class="btn btn-icon" onclick="openSettings()" title="Settings" style="font-size:1.1rem">⚙️</button>
+    <div class="split-btn-group" id="splitBtnGroup">
+      <button class="btn btn-primary split-main" onclick="openModal()">＋ Add Entry</button><button class="split-arrow" onclick="toggleImportMenu(event)" title="More options">▾</button>
+      <div class="import-dropdown hidden" id="importDropdown">
+        <button class="import-menu-item" onclick="closeImportMenu(); openModal()">✏️ Add manually</button>
+        <button class="import-menu-item" onclick="closeImportMenu(); openImportModal()">🔗 Import from link</button>
+        <div class="import-menu-divider"></div>
+        <button class="import-menu-item" onclick="closeImportMenu(); openSauceModal()" title="The Numbers, Mason, What Do They Mean?">🌶️ &ldquo;Sauce&rdquo;</button>
+        <div class="import-menu-divider"></div>
+        <button class="import-menu-item" onclick="closeImportMenu(); openBatchImport()">📥 Bulk Import</button>
+        <button class="import-menu-item" onclick="closeImportMenu(); exportEntries()">📤 Export All</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ══ App Body ══ -->
+<div class="app-body">
+
+  <!-- Sidebar -->
+  <aside>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Filter by Status</div>
+      <button class="filter-btn active" data-filter="all" onclick="setFilter('all', this)">
+        <span class="filter-left"><span class="status-dot" style="background:var(--accent)"></span> All</span>
+        <span class="badge" id="badge-all">0</span>
+      </button>
+      <button class="filter-btn" data-filter="reading" onclick="setFilter('reading', this)">
+        <span class="filter-left"><span class="status-dot d-reading"></span> Reading</span>
+        <span class="badge" id="badge-reading">0</span>
+      </button>
+      <button class="filter-btn" data-filter="planning" onclick="setFilter('planning', this)">
+        <span class="filter-left"><span class="status-dot d-planning"></span> Planning</span>
+        <span class="badge" id="badge-planning">0</span>
+      </button>
+      <button class="filter-btn" data-filter="completed" onclick="setFilter('completed', this)">
+        <span class="filter-left"><span class="status-dot d-completed"></span> Completed</span>
+        <span class="badge" id="badge-completed">0</span>
+      </button>
+      <button class="filter-btn" data-filter="paused" onclick="setFilter('paused', this)">
+        <span class="filter-left"><span class="status-dot d-paused"></span> Paused</span>
+        <span class="badge" id="badge-paused">0</span>
+      </button>
+      <button class="filter-btn" data-filter="rereading" onclick="setFilter('rereading', this)">
+        <span class="filter-left"><span class="status-dot d-rereading"></span> Re-reading</span>
+        <span class="badge" id="badge-rereading">0</span>
+      </button>
+      <button class="filter-btn" data-filter="dropped" onclick="setFilter('dropped', this)">
+        <span class="filter-left"><span class="status-dot d-dropped"></span> Dropped</span>
+        <span class="badge" id="badge-dropped">0</span>
+      </button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Sort by</div>
+      <button class="filter-btn active" onclick="setSort('title', this)">Title A–Z</button>
+      <button class="filter-btn" onclick="setSort('dateAdded', this)">Date Added</button>
+      <button class="filter-btn" onclick="setSort('status', this)">Status</button>
+      <button class="filter-btn" onclick="setSort('progress', this)">Progress</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main>
+    <div class="toolbar">
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Search titles, authors…" oninput="renderEntries()" />
+      </div>
+
+      <div class="tag-filter-wrap" id="tagFilterWrap">
+        <button class="tag-filter-btn" id="tagFilterBtn" onclick="toggleTagFilterPanel()" title="Filter by tag/genre">
+          🏷 Filter
+          <span class="tf-badge hidden" id="tagFilterBadge">0</span>
+        </button>
+      </div>
+
+      <div class="view-toggles">
+        <button class="btn-icon active" title="Detail List" onclick="setView('list', this)">☰</button>
+        <button class="btn-icon" title="Compact List" onclick="setView('compact', this)">≡</button>
+        <button class="btn-icon" title="Thumbnails" onclick="setView('grid', this)">⊞</button>
+        <button class="btn-icon" title="Links" onclick="setView('links', this)">🔗</button>
+      </div>
+    </div>
+
+    <div class="tag-filter-panel hidden" id="tagFilterPanel"></div>
+
+    <div id="entriesContainer"></div>
+    <div class="count-display" id="countDisplay"></div>
+  </main>
+</div>
+
+<!-- ══ Add/Edit Modal ══ -->
+<div class="modal-backdrop hidden" id="modalBackdrop" onclick="backdropClick(event)">
+  <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <span class="modal-title" id="modalTitle">Add Entry</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- Dupe warning -->
+      <div class="dupe-warning hidden" id="dupeWarning">
+        <span>⚠️</span>
+        <div class="dupe-info">
+          <strong>Possible duplicate detected</strong>
+          <span id="dupeDetail"></span>
+        </div>
+      </div>
+
+      <!-- Title & Author -->
+      <div class="field-row">
+        <div class="field">
+          <label>Title *</label>
+          <input type="text" id="fTitle" placeholder="Manga / Manhwa name" />
+        </div>
+        <div class="field">
+          <label>Author</label>
+          <input type="text" id="fAuthor" placeholder="Author name" />
+        </div>
+      </div>
+
+      <!-- Link -->
+      <div class="field">
+        <label>Link (optional)</label>
+        <input type="url" id="fLink" placeholder="https://…" />
+      </div>
+
+      <!-- Thumbnail -->
+      <div class="field">
+        <label>Thumbnail URL (optional)</label>
+        <div class="thumb-row">
+          <div class="thumb-preview" id="thumbPreview">📖</div>
+          <div class="field" style="flex:1; margin:0;">
+            <input type="url" id="fThumb" placeholder="https://image-url…" oninput="previewThumb()" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Status -->
+      <div class="field">
+        <label>Status *</label>
+        <select id="fStatus">
+          <option value="reading">Reading</option>
+          <option value="planning">Planning to Read</option>
+          <option value="completed">Completed</option>
+          <option value="paused">Paused</option>
+          <option value="rereading">Re-reading</option>
+          <option value="dropped">Dropped</option>
+        </select>
+      </div>
+
+      <!-- Progress -->
+      <div class="field">
+        <label>Progress</label>
+        <div class="progress-section">
+          <div class="progress-type-toggle">
+            <button class="progress-type-btn active" id="btnChapters" onclick="setProgressType('chapters')">Chapters</button>
+            <button class="progress-type-btn" id="btnVolumes" onclick="setProgressType('volumes')">Volumes</button>
+          </div>
+          <div class="progress-warning hidden" id="progressWarning">
+            ⚠️ You can only track by <strong>chapters</strong> or <strong>volumes</strong> — not both. Switch between them above. Changing type will clear the existing value.
+          </div>
+          <div class="progress-inputs">
+            <div class="field" id="chaptersField">
+              <label>Chapters read</label>
+              <input type="number" id="fChaptersRead" min="0" placeholder="0" />
+            </div>
+            <div class="field" id="chaptersField2">
+              <label>Total chapters</label>
+              <input type="number" id="fChaptersTotal" min="0" placeholder="?" />
+            </div>
+            <div class="field hidden" id="volumesField">
+              <label>Volumes read</label>
+              <input type="number" id="fVolumesRead" min="0" placeholder="0" />
+            </div>
+            <div class="field hidden" id="volumesField2">
+              <label>Total volumes</label>
+              <input type="number" id="fVolumesTotal" min="0" placeholder="?" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <div class="field">
+        <label>Notes</label>
+        <textarea id="fNotes" placeholder="Your thoughts, where you left off, recommendations…" rows="3"></textarea>
+      </div>
+
+      <!-- Tags -->
+      <div class="field">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+          <label style="margin-bottom:0">Tags</label>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button class="btn-site" id="openAniListBtn" onclick="lookupFromAniList()" title="Fetch tags from AniList">
+              <img class="site-logo" src="https://anilist.co/img/icons/favicon-32x32.png" onerror="this.replaceWith('🟣')" alt="AniList" />
+              <span class="site-label">AniList</span>
+            </button>
+            <button class="btn-site" id="openMUBtn" onclick="lookupFromMangaUpdates()" title="Fetch tags from MangaUpdates">
+              <img class="site-logo" src="https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fencrypted-tbn0.gstatic.com%2Fimages%3Fq%3Dtbn%3AANd9GcQ8HPq8qdXYifvxu8XdsbuSiE4vjlLYw4k8kg%26s&f=1&nofb=1&ipt=67a46636722a9f680f9045b6fcaeeb7fe531f49d12494b4f03fd638bf1b31d08" onerror="this.style.display='none'" alt="MangaUpdates" style="border-radius:3px" />
+              <span class="site-label">MangaUpd</span>
+            </button>
+            <button class="btn btn-ghost" id="lookupTagsBtn" onclick="lookupTags()" style="font-size:0.78rem;padding:3px 10px;height:56px;border-radius:12px">🔍<br><span style="font-size:0.6rem">Lookup<br>Tags</span></button>
+          </div>
+        </div>
+        <input type="hidden" id="fTags" />
+        <div class="tags-preview" id="tagsPreview"><span class="tags-empty">No tags yet — click Lookup Tags or import from a link</span></div>
+      </div>
+
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost danger hidden" id="deleteBtn" onclick="deleteEntry()">🗑 Delete</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="saveBtnMain" onclick="saveEntry()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Import from Link Modal ══ -->
+<div class="modal-backdrop hidden" id="importBackdrop" onclick="importBackdropClick(event)">
+  <div class="modal" role="dialog" aria-modal="true" style="max-width:480px;">
+    <div class="modal-header">
+      <span class="modal-title">🔗 Import from Link</span>
+      <button class="modal-close" onclick="closeImportModal()">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+      <p class="import-hint">Paste a manga page URL. The app will try to pull the cover image, title, and author from the page’s metadata via a CORS proxy. Results vary by site &mdash; you can always edit the fields after importing.</p>
+      <div class="field">
+        <label>URL</label>
+        <input type="url" id="importUrl" placeholder="https://mangadex.org/title/…" />
+      </div>
+      <div class="import-status hidden" id="importStatus">
+        <div class="import-spinner"></div>
+        <span id="importStatusText">Fetching page…</span>
+      </div>
+      <div class="import-result hidden" id="importResult">
+        <div class="import-result-thumb" id="importResultThumb">📖</div>
+        <div>
+          <div class="import-result-title" id="importResultTitle"></div>
+          <div class="import-result-author" id="importResultAuthor"></div>
+          <div class="import-result-tags" id="importResultTags"></div>
+        </div>
+      </div>
+
+      <!-- CF detected inline notice -->
+      <div class="import-status hidden" id="cfDetectNotice" style="border:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.07)">
+        <div class="import-spinner" style="border-top-color:#f59e0b"></div>
+        <span style="color:#f59e0b">Cloudflare detected — opening in-app panel…</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeImportModal()">Cancel</button>
+      <button class="btn btn-primary" id="importFetchBtn" onclick="scrapeUrl()">Fetch &amp; Continue</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Batch Import Modal -->
+<div class="modal-backdrop hidden" id="batchBackdrop" onclick="if(event.target===this&&!batchRunning)closeBatchImport()">
+  <div class="modal" role="dialog" aria-modal="true" style="max-width:580px;">
+    <div class="modal-header">
+      <span class="modal-title">📥 Bulk Import</span>
+      <button class="modal-close" onclick="closeBatchImport()">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+
+      <div id="batchStep1">
+        <div class="field">
+          <label>URLs or titles &mdash; one per line</label>
+          <textarea id="batchUrls" class="batch-textarea" placeholder="https://mangadex.org/title/...&#10;https://anilist.co/manga/...&#10;Berserk&#10;One Piece"></textarea>
+        </div>
+        <div class="batch-options">
+          <div class="field">
+            <label>Default status</label>
+            <select id="batchStatus">
+              <option value="planning">Planning</option>
+              <option value="reading">Reading</option>
+              <option value="completed">Completed</option>
+              <option value="paused">Paused</option>
+              <option value="dropped">Dropped</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Delay between requests</label>
+            <select id="batchDelay">
+              <option value="1000">1 second</option>
+              <option value="2000" selected>2 seconds</option>
+              <option value="3000">3 seconds</option>
+              <option value="5000">5 seconds</option>
+            </select>
+          </div>
+        </div>
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:10px;line-height:1.5">
+          Tip: paste a <code style="background:var(--surface3);padding:1px 5px;border-radius:3px">.json</code> export to restore a backup instantly without re-scraping &mdash;
+          <label style="cursor:pointer;color:var(--accent2);text-decoration:underline">
+            or load a file
+            <input type="file" id="batchFileInput" accept=".json,.txt" style="display:none" onchange="batchLoadFile(this)" />
+          </label>
+        </p>
+      </div>
+
+      <div id="batchStep2" class="hidden">
+        <div class="batch-progress-bar"><div class="batch-progress-fill" id="batchProgressFill"></div></div>
+        <div class="batch-progress-text" id="batchProgressText">0 / 0</div>
+        <div class="batch-log" id="batchLog"></div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="batchCancelBtn" onclick="closeBatchImport()">Cancel</button>
+      <button class="btn btn-primary" id="batchStartBtn" onclick="runBatchImport()">Start Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-backdrop hidden" id="settingsBackdrop" onclick="if(event.target===this)closeSettings()">
+  <div class="modal" role="dialog" aria-modal="true" style="max-width:460px;">
+    <div class="modal-header">
+      <span class="modal-title">⚙️ Settings</span>
+      <button class="modal-close" onclick="closeSettings()">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+
+      <div class="settings-section">
+        <div class="settings-section-title">Import Preferences</div>
+
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Title Language</div>
+            <div class="settings-desc">Preferred language when a title is available in multiple languages (e.g. separated by "|")</div>
+          </div>
+          <select id="settingLang" onchange="saveSettings()">
+            <option value="en">English</option>
+            <option value="ja-ro">Japanese (Romaji)</option>
+            <option value="ja">Japanese (Native)</option>
+            <option value="zh">Chinese</option>
+            <option value="ko">Korean</option>
+            <option value="original">Site Default / Original</option>
+          </select>
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Show Links in List View</div>
+            <div class="settings-desc">Display the source URL on each entry in the detail list view.</div>
+          </div>
+          <label class="toggle" title="Show links in list view">
+            <input type="checkbox" id="settingShowLinks" onchange="saveSettings()" />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Cache Cover Images</div>
+            <div class="settings-desc">Download and store cover images locally so they load without an internet connection. New and edited entries are cached on save.</div>
+          </div>
+          <label class="toggle" title="Cache cover images">
+            <input type="checkbox" id="settingCacheImages" onchange="saveSettings()" />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row" id="cacheInfoRow">
+          <div>
+            <div class="settings-label">Cached Images</div>
+            <div class="settings-desc" id="cacheInfoText">0 images cached</div>
+          </div>
+          <button class="btn btn-ghost" style="font-size:0.78rem;padding:4px 10px" onclick="clearImageCache()">Clear Cache</button>
+        </div>
+
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-title">API Keys</div>
+
+        <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div>
+            <div class="settings-label">NH API Key</div>
+            <div class="settings-desc">Used to authenticate with the NH API. Encrypted with AES-256-GCM and stored locally — never saved as plaintext.</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <div style="position:relative;flex:1;min-width:0">
+              <input type="password" id="settingNhKey" class="themed-input" placeholder="Paste API key…" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;padding-right:38px" />
+              <button class="btn btn-icon" id="nhKeyEyeBtn" onclick="toggleNhKeyVisibility()" title="Show / hide" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:0.95rem;padding:2px 5px;background:none;border:none;cursor:pointer;opacity:0.6">&#128065;</button>
+            </div>
+            <button class="btn btn-primary" id="saveNhKeyBtn" onclick="saveNhKey()" style="white-space:nowrap;flex-shrink:0">Save</button>
+            <button class="btn btn-ghost" onclick="clearNhKey()" style="white-space:nowrap;flex-shrink:0">Clear</button>
+          </div>
+        </div>
+
+        <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div>
+            <div class="settings-label">MangaDex API Key</div>
+            <div class="settings-desc">Personal client token for the MangaDex API. Encrypted with AES-256-GCM and stored locally — never saved as plaintext.</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <div style="position:relative;flex:1;min-width:0">
+              <input type="password" id="settingMdxKey" class="themed-input" placeholder="Paste API key…" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;padding-right:38px" />
+              <button class="btn btn-icon" id="mdxKeyEyeBtn" onclick="toggleMdxKeyVisibility()" title="Show / hide" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:0.95rem;padding:2px 5px;background:none;border:none;cursor:pointer;opacity:0.6">&#128065;</button>
+            </div>
+            <button class="btn btn-primary" id="saveMdxKeyBtn" onclick="saveMdxKey()" style="white-space:nowrap;flex-shrink:0">Save</button>
+            <button class="btn btn-ghost" onclick="clearMdxKey()" style="white-space:nowrap;flex-shrink:0">Clear</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Sauce Modal -->
+<div class="modal-backdrop hidden" id="sauceBackdrop" onclick="if(event.target===this)closeSauceModal()">
+  <div class="modal" role="dialog" aria-modal="true" style="max-width:380px;">
+    <div class="modal-header">
+      <span class="modal-title">🌶️ &ldquo;Sauce&rdquo;</span>
+      <button class="modal-close" onclick="closeSauceModal()">&#x2715;</button>
+    </div>
+    <div class="modal-body">
+      <p class="import-hint" style="margin-bottom:0">Enter an NH ID or paste a full NH URL.</p>
+      <div class="field" style="margin-top:12px">
+        <label>ID / URL</label>
+        <input type="text" id="sauceIdInput" placeholder="e.g. 595768 or https://nhentai.net/g/595768/" onkeydown="if(event.key==='Enter')sauceImport()" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeSauceModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="sauceImport()">Fetch &amp; Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- CF Webview Panel -->
+<div class="cf-panel-backdrop hidden" id="cfPanelBackdrop">
+  <div class="cf-panel">
+    <div class="cf-panel-header">
+      <div>
+        <div class="cf-panel-title">&#x1F6E1;&#xFE0F; Cloudflare Challenge</div>
+        <div class="cf-panel-subtitle" id="cfPanelSubtitle">Solve the challenge below &mdash; we&rsquo;ll detect when it&rsquo;s done and grab the info automatically.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <button class="btn btn-primary" id="cfGrabBtn" onclick="cfGrabNow()" style="font-size:0.8rem;padding:6px 14px">&#x2713; Grab Info Now</button>
+        <button class="modal-close" onclick="closeCfPanel()">&#x2715;</button>
+      </div>
+    </div>
+    <div class="cf-panel-body">
+      <webview id="cfWebview" partition="persist:manga"></webview>
+      <!-- Web-server mode: no webview, shows status while puppeteer window is open -->
+      <div id="cfServerStatus" class="hidden" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:18px;text-align:center;padding:48px 32px">
+        <div style="font-size:2.8rem">&#x1F310;</div>
+        <div id="cfServerStatusText" style="font-size:1rem;font-weight:600;color:var(--text)"></div>
+        <div id="cfServerStatusSub" style="font-size:0.83rem;color:var(--text-muted);max-width:380px;line-height:1.55"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── State ──
+  let entries = JSON.parse(localStorage.getItem('mangaEntries') || '[]');
+  let currentFilter = 'all';
+  let currentSort = 'title';
+  let currentView = 'list';
+  let editingId = null;
+  let progressType = 'chapters'; // 'chapters' | 'volumes'
+  let dupeConfirmed = false;
+  let cfPanelUrl = '';
+
+  // ── Settings ──
+  const DEFAULT_SETTINGS = { lang: 'en', cacheImages: false, showLinks: true };
+  let settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('mangaSettings') || '{}') };
+
+  // ── Image Cache ──
+  let imageCache = JSON.parse(localStorage.getItem('mangaImageCache') || '{}');
+  function saveImageCache() { localStorage.setItem('mangaImageCache', JSON.stringify(imageCache)); }
+  function clearImageCache() {
+    if (!confirm('Clear all cached images? Thumbnails will reload from the internet when entries are displayed.')) return;
+    imageCache = {};
+    saveImageCache();
+    updateCacheInfo();
+    renderEntries();
+  }
+  function updateCacheInfo() {
+    const count = Object.keys(imageCache).length;
+    const el = document.getElementById('cacheInfoText');
+    if (el) el.textContent = count === 0 ? 'No images cached' : `${count} image${count !== 1 ? 's' : ''} cached`;
+  }
+  async function cacheThumb(entryId, thumbUrl) {
+    if (!thumbUrl) return;
+    try {
+      const res = await fetch(thumbUrl);
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const reader = new FileReader();
+      reader.onload = () => {
+        imageCache[entryId] = reader.result;
+        saveImageCache();
+        updateCacheInfo();
+        renderEntries();
+      };
+      reader.readAsDataURL(blob);
+    } catch(e) { /* silently skip if unreachable */ }
+  }
+
+  function saveSettings() {
+    settings.lang = document.getElementById('settingLang').value;
+    settings.cacheImages = document.getElementById('settingCacheImages').checked;
+    settings.showLinks = document.getElementById('settingShowLinks').checked;
+    localStorage.setItem('mangaSettings', JSON.stringify(settings));
+    renderEntries();
+  }
+  function openSettings() {
+    document.getElementById('settingLang').value = settings.lang;
+    document.getElementById('settingCacheImages').checked = !!settings.cacheImages;
+    document.getElementById('settingShowLinks').checked = settings.showLinks !== false;
+    updateCacheInfo();
+    loadNhKeyField();
+    loadMdxKeyField();
+    document.getElementById('settingsBackdrop').classList.remove('hidden');
+  }
+  function closeSettings() {
+    document.getElementById('settingsBackdrop').classList.add('hidden');
+  }
+
+  // ── Encrypted secrets (AES-256-GCM via Web Crypto) ──
+  // A random 256-bit device key is generated once and stored in mangaKeystore.
+  // Secrets are encrypted with that key + a fresh IV each save; the ciphertext
+  // and IV live in mangaSecrets.  Neither the key nor the plaintext is ever
+  // stored directly as a readable string.
+  function _hexToBytes(hex) {
+    return new Uint8Array(hex.match(/.{2}/g).map(b => parseInt(b, 16)));
+  }
+  function _bytesToHex(buf) {
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  async function _getDeviceKey() {
+    let stored = localStorage.getItem('mangaKeystore');
+    if (!stored) {
+      const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+      const raw = await crypto.subtle.exportKey('raw', key);
+      stored = _bytesToHex(raw);
+      localStorage.setItem('mangaKeystore', stored);
+    }
+    return crypto.subtle.importKey('raw', _hexToBytes(stored), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+  async function _encryptSecret(plaintext) {
+    const key = await _getDeviceKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
+    return { ct: _bytesToHex(ct), iv: _bytesToHex(iv) };
+  }
+  async function _decryptSecret(ctHex, ivHex) {
+    const key = await _getDeviceKey();
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: _hexToBytes(ivHex) }, key, _hexToBytes(ctHex));
+    return new TextDecoder().decode(pt);
+  }
+  function _getSecrets() { return JSON.parse(localStorage.getItem('mangaSecrets') || '{}'); }
+  function _saveSecrets(obj) { localStorage.setItem('mangaSecrets', JSON.stringify(obj)); }
+
+  async function getNhApiKey() {
+    const s = _getSecrets();
+    if (!s.nhKey) return null;
+    try { return await _decryptSecret(s.nhKey.ct, s.nhKey.iv); } catch { return null; }
+  }
+  async function loadNhKeyField() {
+    const key = await getNhApiKey();
+    const el = document.getElementById('settingNhKey');
+    el.value = key || '';
+    el.type = 'password';
+    document.getElementById('nhKeyEyeBtn').textContent = '\u{1F441}';
+  }
+  async function saveNhKey() {
+    const val = document.getElementById('settingNhKey').value.trim();
+    const secrets = _getSecrets();
+    if (val) {
+      secrets.nhKey = await _encryptSecret(val);
+    } else {
+      delete secrets.nhKey;
+    }
+    _saveSecrets(secrets);
+    const btn = document.getElementById('saveNhKeyBtn');
+    const orig = btn.textContent;
+    btn.textContent = 'Saved \u2713';
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+  }
+  function clearNhKey() {
+    const secrets = _getSecrets();
+    delete secrets.nhKey;
+    _saveSecrets(secrets);
+    document.getElementById('settingNhKey').value = '';
+  }
+  function toggleNhKeyVisibility() {
+    const el = document.getElementById('settingNhKey');
+    const btn = document.getElementById('nhKeyEyeBtn');
+    if (el.type === 'password') {
+      el.type = 'text';
+      btn.style.opacity = '1';
+    } else {
+      el.type = 'password';
+      btn.style.opacity = '0.6';
+    }
+  }
+
+  async function getMdxApiKey() {
+    const s = _getSecrets();
+    if (!s.mdxKey) return null;
+    try { return await _decryptSecret(s.mdxKey.ct, s.mdxKey.iv); } catch { return null; }
+  }
+  async function loadMdxKeyField() {
+    const key = await getMdxApiKey();
+    const el = document.getElementById('settingMdxKey');
+    el.value = key || '';
+    el.type = 'password';
+    document.getElementById('mdxKeyEyeBtn').textContent = '\u{1F441}';
+  }
+  async function saveMdxKey() {
+    const val = document.getElementById('settingMdxKey').value.trim();
+    const secrets = _getSecrets();
+    if (val) {
+      secrets.mdxKey = await _encryptSecret(val);
+    } else {
+      delete secrets.mdxKey;
+    }
+    _saveSecrets(secrets);
+    const btn = document.getElementById('saveMdxKeyBtn');
+    const orig = btn.textContent;
+    btn.textContent = 'Saved \u2713';
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+  }
+  function clearMdxKey() {
+    const secrets = _getSecrets();
+    delete secrets.mdxKey;
+    _saveSecrets(secrets);
+    document.getElementById('settingMdxKey').value = '';
+  }
+  function toggleMdxKeyVisibility() {
+    const el = document.getElementById('settingMdxKey');
+    const btn = document.getElementById('mdxKeyEyeBtn');
+    if (el.type === 'password') {
+      el.type = 'text';
+      btn.style.opacity = '1';
+    } else {
+      el.type = 'password';
+      btn.style.opacity = '0.6';
+    }
+  }
+
+  // Pick the best title from a pipe-separated string based on language setting.
+  // Sites like nhentai encode: "English Title | Japanese Title" or similar.
+  function pickTitle(raw) {
+    if (!raw) return '';
+    const parts = raw.split('|').map(s => s.trim()).filter(Boolean);
+    if (parts.length <= 1) return raw.trim();
+    const lang = settings.lang;
+    // Convention on most manga sites (nhentai, MangaDex, etc.):
+    //   [0] = original/native title  |  [last] = translated/English title
+    // So for English we prefer the LAST segment; for CJK we prefer the FIRST.
+    const isCJK = s => /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(s);
+    const isLatin = s => /^[\x00-\x7f\s\-'.,!?()[\]]+$/.test(s);
+    if (lang === 'en') {
+      // Last latin segment, falling back to the last segment overall
+      const latinParts = parts.filter(isLatin);
+      return latinParts.length ? latinParts[latinParts.length - 1] : parts[parts.length - 1];
+    } else if (lang === 'ja' || lang === 'zh' || lang === 'ko') {
+      // First CJK segment, falling back to first overall
+      return parts.find(isCJK) || parts[0];
+    } else if (lang === 'ja-ro') {
+      // First latin segment (romaji sits before the English translation on most sites)
+      return parts.find(isLatin) || parts[0];
+    }
+    return parts[0];
+  }
+  let cfPollInterval = null;
+  let cfServerSessionId = null;
+
+  // Detect runtime: Electron exposes process.versions.electron in the renderer
+  // (contextIsolation is false in this app). In a plain browser it's undefined.
+  const IS_ELECTRON = typeof process !== 'undefined' && !!process.versions?.electron;
+
+  const STATUS_LABELS = {
+    reading: 'Reading',
+    planning: 'Planning',
+    completed: 'Completed',
+    paused: 'Paused',
+    rereading: 'Re-reading',
+    dropped: 'Dropped',
+  };
+
+  // ── Persistence ──
+  function save() {
+    localStorage.setItem('mangaEntries', JSON.stringify(entries));
+  }
+
+  // ── Filters / Sort ──
+  function setFilter(filter, btn) {
+    currentFilter = filter;
+    document.querySelectorAll('.filter-btn[data-filter]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderEntries();
+  }
+
+  function setSort(sort, btn) {
+    currentSort = sort;
+    document.querySelectorAll('.sidebar-section:nth-child(2) .filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderEntries();
+  }
+
+  function setView(view, btn) {
+    currentView = view;
+    document.querySelectorAll('.view-toggles .btn-icon').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderEntries();
+  }
+
+  // ── Modal ──
+  function openModal(id = null) {
+    editingId = id;
+    const entry = id ? entries.find(e => e.id === id) : null;
+
+    document.getElementById('modalTitle').textContent = id ? 'Edit Entry' : 'Add Entry';
+    document.getElementById('deleteBtn').classList.toggle('hidden', !id);
+
+    document.getElementById('fTitle').value = entry?.title || '';
+    document.getElementById('fAuthor').value = entry?.author || '';
+    document.getElementById('fLink').value = entry?.link || '';
+    document.getElementById('fThumb').value = entry?.thumb || '';
+    document.getElementById('fStatus').value = entry?.status || 'reading';
+    document.getElementById('fNotes').value = entry?.notes || '';
+    document.getElementById('fTags').value = (entry?.tags || []).join(', ');
+    renderTagsPreview();
+
+    // Progress type
+    const pType = entry?.progressType || 'chapters';
+    progressType = pType;
+    updateProgressUI();
+    // Show warning only if user had previously set a value
+    document.getElementById('progressWarning').classList.add('hidden');
+
+    if (pType === 'chapters') {
+      document.getElementById('fChaptersRead').value = entry?.chaptersRead ?? '';
+      document.getElementById('fChaptersTotal').value = entry?.chaptersTotal ?? '';
+      document.getElementById('fVolumesRead').value = '';
+      document.getElementById('fVolumesTotal').value = '';
+    } else {
+      document.getElementById('fVolumesRead').value = entry?.volumesRead ?? '';
+      document.getElementById('fVolumesTotal').value = entry?.volumesTotal ?? '';
+      document.getElementById('fChaptersRead').value = '';
+      document.getElementById('fChaptersTotal').value = '';
+    }
+
+    previewThumb();
+    // Reset dupe state
+    document.getElementById('dupeWarning').classList.add('hidden');
+    document.getElementById('saveBtnMain').textContent = 'Save';
+    dupeConfirmed = false;
+    document.getElementById('modalBackdrop').classList.remove('hidden');
+    document.getElementById('fTitle').focus();
+  }
+
+  function closeModal() {
+    document.getElementById('modalBackdrop').classList.add('hidden');
+    document.getElementById('dupeWarning').classList.add('hidden');
+    document.getElementById('saveBtnMain').textContent = 'Save';
+    dupeConfirmed = false;
+    editingId = null;
+  }
+
+  function backdropClick(e) {
+    if (e.target === document.getElementById('modalBackdrop')) closeModal();
+  }
+
+  function setProgressType(type) {
+    const hadValue =
+      (progressType === 'chapters' && (document.getElementById('fChaptersRead').value || document.getElementById('fChaptersTotal').value)) ||
+      (progressType === 'volumes'  && (document.getElementById('fVolumesRead').value  || document.getElementById('fVolumesTotal').value));
+
+    if (type !== progressType) {
+      if (hadValue) {
+        document.getElementById('progressWarning').classList.remove('hidden');
+        // Clear old values when switching
+        document.getElementById('fChaptersRead').value = '';
+        document.getElementById('fChaptersTotal').value = '';
+        document.getElementById('fVolumesRead').value = '';
+        document.getElementById('fVolumesTotal').value = '';
+      }
+      progressType = type;
+      updateProgressUI();
+    }
+  }
+
+  function updateProgressUI() {
+    const isChapters = progressType === 'chapters';
+    document.getElementById('btnChapters').classList.toggle('active', isChapters);
+    document.getElementById('btnVolumes').classList.toggle('active', !isChapters);
+    document.getElementById('chaptersField').classList.toggle('hidden', !isChapters);
+    document.getElementById('chaptersField2').classList.toggle('hidden', !isChapters);
+    document.getElementById('volumesField').classList.toggle('hidden', isChapters);
+    document.getElementById('volumesField2').classList.toggle('hidden', isChapters);
+  }
+
+  function previewThumb() {
+    const url = document.getElementById('fThumb').value.trim();
+    const preview = document.getElementById('thumbPreview');
+    if (url) {
+      preview.innerHTML = `<img src="${escHtml(url)}" onerror="this.parentElement.innerHTML='📖'" alt="thumb" />`;
+    } else {
+      preview.innerHTML = '📖';
+    }
+  }
+
+  function saveEntry() {
+    const title = document.getElementById('fTitle').value.trim();
+    if (!title) {
+      document.getElementById('fTitle').focus();
+      document.getElementById('fTitle').style.borderColor = '#ef4444';
+      setTimeout(() => document.getElementById('fTitle').style.borderColor = '', 1500);
+      return;
+    }
+
+    const link = document.getElementById('fLink').value.trim();
+
+    // Duplicate detection (first save attempt only)
+    if (!dupeConfirmed) {
+      const others = entries.filter(e => e.id !== editingId);
+      let dupeMsg = '';
+      if (link) {
+        const d = others.find(e => e.link && e.link === link);
+        if (d) dupeMsg = `Exact link already exists: "${d.title}" — click Save anyway to add regardless.`;
+      }
+      if (!dupeMsg) {
+        const d = others.find(e => e.title.toLowerCase() === title.toLowerCase());
+        if (d) dupeMsg = `Title matches existing entry "${d.title}" — click Save anyway to add regardless.`;
+      }
+      if (dupeMsg) {
+        document.getElementById('dupeDetail').textContent = dupeMsg;
+        document.getElementById('dupeWarning').classList.remove('hidden');
+        document.getElementById('dupeWarning').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        document.getElementById('saveBtnMain').textContent = 'Save anyway';
+        dupeConfirmed = true;
+        return;
+      }
+    }
+
+    const entry = {
+      id: editingId || Date.now().toString(),
+      title,
+      author: document.getElementById('fAuthor').value.trim(),
+      link,
+      thumb: document.getElementById('fThumb').value.trim(),
+      status: document.getElementById('fStatus').value,
+      notes: document.getElementById('fNotes').value.trim(),
+      progressType,
+      chaptersRead: progressType === 'chapters' ? (parseInt(document.getElementById('fChaptersRead').value) || null) : null,
+      chaptersTotal: progressType === 'chapters' ? (parseInt(document.getElementById('fChaptersTotal').value) || null) : null,
+      volumesRead: progressType === 'volumes' ? (parseInt(document.getElementById('fVolumesRead').value) || null) : null,
+      volumesTotal: progressType === 'volumes' ? (parseInt(document.getElementById('fVolumesTotal').value) || null) : null,
+      tags: document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean),
+      dateAdded: editingId ? (entries.find(e => e.id === editingId)?.dateAdded || Date.now()) : Date.now(),
+    };
+
+    if (editingId) {
+      const idx = entries.findIndex(e => e.id === editingId);
+      entries[idx] = entry;
+    } else {
+      entries.push(entry);
+    }
+
+    save();
+    closeModal();
+    renderEntries();
+    // Cache cover image if enabled
+    if (settings.cacheImages && entry.thumb) {
+      cacheThumb(entry.id, entry.thumb);
+    } else if (!settings.cacheImages && imageCache[entry.id]) {
+      // Remove stale cache entry if caching was turned off
+      delete imageCache[entry.id];
+      saveImageCache();
+    }
+  }
+
+  function deleteEntry() {
+    if (!editingId) return;
+    if (!confirm('Delete this entry? This cannot be undone.')) return;
+    const removedId = editingId;
+    entries = entries.filter(e => e.id !== editingId);
+    if (imageCache[removedId]) {
+      delete imageCache[removedId];
+      saveImageCache();
+    }
+    save();
+    closeModal();
+    renderEntries();
+  }
+
+  // ── Helpers ──
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function progressLabel(entry) {
+    if (entry.progressType === 'volumes') {
+      const r = entry.volumesRead != null ? entry.volumesRead : '–';
+      const t = entry.volumesTotal != null ? entry.volumesTotal : '?';
+      return `Vol. ${r} / ${t}`;
+    } else {
+      const r = entry.chaptersRead != null ? entry.chaptersRead : '–';
+      const t = entry.chaptersTotal != null ? entry.chaptersTotal : '?';
+      return r !== '–' || t !== '?' ? `Ch. ${r} / ${t}` : '';
+    }
+  }
+
+  function thumbHtml(entry, size = 'sm') {
+    const cached = imageCache[entry.id];
+    if (cached) {
+      return `<img src="${cached}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />`;
+    }
+    if (entry.thumb) {
+      return `<img src="${escHtml(entry.thumb)}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />`;
+    }
+    return '📖';
+  }
+
+  function statusPill(status, extraClass = '') {
+    return `<span class="status-pill s-${status} ${extraClass}">${STATUS_LABELS[status] || status}</span>`;
+  }
+
+  // ── Tag filter state ──
+  // Map of tag (string) -> 'include' | 'exclude'
+  const tagFilters = new Map();
+
+  function toggleTagFilterPanel() {
+    const panel = document.getElementById('tagFilterPanel');
+    const isOpen = !panel.classList.contains('hidden');
+    if (isOpen) { panel.classList.add('hidden'); return; }
+    renderTagPills();
+    panel.classList.remove('hidden');
+  }
+
+  function renderTagPills() {
+    const counts = getAllTagCounts();
+    const panel = document.getElementById('tagFilterPanel');
+    if (!counts.size) {
+      panel.innerHTML = '<span style="color:var(--text-muted);font-size:0.75rem">No tags in your list yet</span>';
+      return;
+    }
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const pillsHtml = sorted.map(([tag]) => {
+      const state = tagFilters.get(tag) || 'none';
+      const cls = state === 'include' ? 'include' : state === 'exclude' ? 'exclude' : '';
+      return `<button class="tf-pill ${cls}" onclick="cycleTagFilter(${escHtml(JSON.stringify(tag))})">${escHtml(tag)}</button>`;
+    }).join('');
+    panel.innerHTML = pillsHtml +
+      `<button class="tf-clear-pill" onclick="clearTagFilters()" title="Clear all filters">✕ Clear</button>`;
+  }
+
+  // Rebuild pills in-place without closing the panel
+  function refreshTagPills() {
+    const panel = document.getElementById('tagFilterPanel');
+    if (!panel.classList.contains('hidden')) renderTagPills();
+  }
+
+  function getAllTagCounts() {
+    const counts = new Map();
+    for (const e of entries) {
+      for (const t of (e.tags || [])) {
+        counts.set(t, (counts.get(t) || 0) + 1);
+      }
+    }
+    return counts;
+  }
+
+  // kept for compatibility (no longer used for dropdown list)
+  function renderTagFilterList() { refreshTagPills(); }
+  function populateTagFilterDropdown() { refreshTagPills(); }
+
+  function cycleTagFilter(tag) {
+    const cur = tagFilters.get(tag) || 'none';
+    if (cur === 'none') tagFilters.set(tag, 'include');
+    else if (cur === 'include') tagFilters.set(tag, 'exclude');
+    else tagFilters.delete(tag);
+    updateTagFilterBadge();
+    refreshTagPills();
+    renderEntries();
+  }
+
+  function clearTagFilters() {
+    tagFilters.clear();
+    updateTagFilterBadge();
+    refreshTagPills();
+    renderEntries();
+  }
+
+  function updateTagFilterBadge() {
+    const count = tagFilters.size;
+    const badge = document.getElementById('tagFilterBadge');
+    const btn = document.getElementById('tagFilterBtn');
+    badge.textContent = count;
+    if (count > 0) { badge.classList.remove('hidden'); btn.classList.add('active'); }
+    else { badge.classList.add('hidden'); btn.classList.remove('active'); }
+  }
+
+  // ── Render ──
+  function getFiltered() {
+    const q = document.getElementById('searchInput').value.toLowerCase();
+    const includes = [...tagFilters.entries()].filter(([,v]) => v === 'include').map(([k]) => k);
+    const excludes = [...tagFilters.entries()].filter(([,v]) => v === 'exclude').map(([k]) => k);
+    return entries
+      .filter(e => currentFilter === 'all' || e.status === currentFilter)
+      .filter(e => !q || e.title.toLowerCase().includes(q) || (e.author || '').toLowerCase().includes(q))
+      .filter(e => includes.length === 0 || includes.every(t => (e.tags || []).includes(t)))
+      .filter(e => excludes.length === 0 || !excludes.some(t => (e.tags || []).includes(t)))
+      .sort((a, b) => {
+        if (currentSort === 'title') return a.title.localeCompare(b.title);
+        if (currentSort === 'dateAdded') return b.dateAdded - a.dateAdded;
+        if (currentSort === 'status') return a.status.localeCompare(b.status);
+        if (currentSort === 'progress') {
+          const pa = (a.progressType === 'volumes' ? a.volumesRead : a.chaptersRead) || 0;
+          const pb = (b.progressType === 'volumes' ? b.volumesRead : b.chaptersRead) || 0;
+          return pb - pa;
+        }
+        return 0;
+      });
+  }
+
+  function renderEntries() {
+    updateBadges();
+    const filtered = getFiltered();
+    const container = document.getElementById('entriesContainer');
+    document.getElementById('countDisplay').textContent =
+      filtered.length === entries.length
+        ? `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`
+        : `Showing ${filtered.length} of ${entries.length}`;
+
+    if (filtered.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">📭</div>
+          <div class="empty-title">${entries.length === 0 ? 'Your list is empty' : 'No matches found'}</div>
+          <div class="empty-sub">${entries.length === 0 ? 'Click "+ Add Entry" to get started.' : 'Try adjusting your search or filter.'}</div>
+        </div>`;
+      return;
+    }
+
+    if (currentView === 'list') renderList(filtered, container);
+    else if (currentView === 'compact') renderCompact(filtered, container);
+    else if (currentView === 'grid') renderGrid(filtered, container);
+    else if (currentView === 'links') renderLinks(filtered, container);
+  }
+
+  function renderList(filtered, container) {
+    container.innerHTML = `<div class="entries-list">${filtered.map(e => `
+      <div class="entry-card" onclick="openModal('${e.id}')">
+        <div class="entry-thumb-sm">${thumbHtml(e)}</div>
+        <div class="entry-info">
+          <div class="entry-title">${escHtml(e.title)}</div>
+          ${e.author ? `<div class="entry-author">by ${escHtml(e.author)}</div>` : ''}
+          <div class="entry-meta">
+            ${statusPill(e.status)}
+            ${progressLabel(e) ? `<span class="progress-text">${progressLabel(e)}</span>` : ''}
+            ${settings.showLinks !== false && e.link ? `<a class="entry-link" href="${escHtml(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.link)}</a>` : ''}
+          </div>
+          ${e.notes ? `<div class="notes-preview">💬 ${escHtml(e.notes)}</div>` : ''}
+          ${e.tags?.length ? `<div class="entry-tags">${e.tags.slice(0,8).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('')}</div>` : ''}
+        </div>
+        <div class="entry-site-btns" onclick="event.stopPropagation()">
+          <button class="btn-site" onclick="lookupOnSite('anilist', ${escHtml(JSON.stringify(e.title))}, '${e.id}')" title="Lookup on AniList">
+            <img class="site-logo" src="https://anilist.co/img/icons/favicon-32x32.png" onerror="this.replaceWith('🟣')" alt="AniList" />
+            <span class="site-label">AniList</span>
+          </button>
+          <button class="btn-site" onclick="lookupOnSite('mangaupdates', ${escHtml(JSON.stringify(e.title))}, '${e.id}')" title="Lookup on MangaUpdates">
+            <img class="site-logo" src="https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fencrypted-tbn0.gstatic.com%2Fimages%3Fq%3Dtbn%3AANd9GcQ8HPq8qdXYifvxu8XdsbuSiE4vjlLYw4k8kg%26s&f=1&nofb=1&ipt=67a46636722a9f680f9045b6fcaeeb7fe531f49d12494b4f03fd638bf1b31d08" onerror="this.style.display='none'" alt="MangaUpdates" style="border-radius:3px" />
+            <span class="site-label">MangaUpd</span>
+          </button>
+        </div>
+      </div>`).join('')}</div>`;
+  }
+
+  function renderCompact(filtered, container) {
+    container.innerHTML = `<div class="entries-compact">${filtered.map(e => `
+      <div class="entry-compact-row" onclick="openModal('${e.id}')">
+        <div class="compact-title">${escHtml(e.title)}</div>
+        <div class="compact-author">${e.author ? escHtml(e.author) : '<span style="color:var(--text-muted);font-style:italic">Unknown</span>'}</div>
+        <div class="compact-status">${statusPill(e.status)}</div>
+        <div class="compact-progress">${progressLabel(e)}</div>
+      </div>`).join('')}</div>`;
+  }
+
+  function renderGrid(filtered, container) {
+    container.innerHTML = `<div class="entries-grid">${filtered.map(e => `
+      <div class="entry-grid-card" onclick="openModal('${e.id}')">
+        <div class="entry-thumb-lg">
+          ${e.thumb ? `<img src="${escHtml(e.thumb)}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />` : '📖'}
+          <span class="status-pill thumb-status s-${e.status}">${STATUS_LABELS[e.status]}</span>
+        </div>
+        <div class="entry-grid-info">
+          <div class="entry-grid-title">${escHtml(e.title)}</div>
+          ${e.author ? `<div class="entry-grid-author">${escHtml(e.author)}</div>` : ''}
+          ${progressLabel(e) ? `<div class="entry-grid-progress">${progressLabel(e)}</div>` : ''}
+          ${e.tags?.length ? `<div class="entry-tags" style="margin-top:4px">${e.tags.slice(0,5).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('')}</div>` : ''}
+        </div>
+      </div>`).join('')}</div>`;
+  }
+
+  function renderLinks(filtered, container) {
+    container.innerHTML = `<div class="entries-links">${filtered.map(e => `
+      <div class="entry-link-row" onclick="openModal('${e.id}')">
+        ${statusPill(e.status)}
+        <div class="link-main">
+          <div class="link-title">
+            ${e.link
+              ? `<a href="${escHtml(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.title)}</a>`
+              : escHtml(e.title)
+            }
+          </div>
+          ${e.link
+            ? `<a class="link-url" href="${escHtml(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.link)}</a>`
+            : `<span class="no-link">No link</span>`
+          }
+        </div>
+      </div>`).join('')}</div>`;
+  }
+
+  function updateBadges() {
+    const counts = { reading:0, planning:0, completed:0, paused:0, rereading:0, dropped:0 };
+    entries.forEach(e => { if (counts[e.status] != null) counts[e.status]++; });
+    document.getElementById('badge-all').textContent = entries.length;
+    Object.keys(counts).forEach(k => {
+      const el = document.getElementById('badge-' + k);
+      if (el) el.textContent = counts[k];
+    });
+  }
+
+  // ── Import Menu (split button dropdown) ──
+  function toggleImportMenu(e) {
+    e.stopPropagation();
+    document.getElementById('importDropdown').classList.toggle('hidden');
+  }
+  function closeImportMenu() {
+    document.getElementById('importDropdown').classList.add('hidden');
+  }
+
+  function openSauceModal() {
+    document.getElementById('sauceIdInput').value = '';
+    document.getElementById('sauceBackdrop').classList.remove('hidden');
+    setTimeout(() => document.getElementById('sauceIdInput').focus(), 50);
+  }
+  function closeSauceModal() {
+    document.getElementById('sauceBackdrop').classList.add('hidden');
+  }
+  function sauceImport() {
+    const raw = document.getElementById('sauceIdInput').value.trim();
+    if (!raw) return;
+    const match = raw.match(/\d+/);
+    if (!match) return;
+    const id = match[0];
+    const url = `https://nhentai.net/g/${id}/`;
+    closeSauceModal();
+    openImportModal();
+    document.getElementById('importUrl').value = url;
+    scrapeUrl();
+  }
+  document.addEventListener('click', () => closeImportMenu());
+
+  // ── Import Modal ──
+  function openImportModal() {
+    document.getElementById('importUrl').value = '';
+    document.getElementById('importStatus').classList.add('hidden');
+    document.getElementById('importResult').classList.add('hidden');
+    document.getElementById('cfDetectNotice').classList.add('hidden');
+    const btn = document.getElementById('importFetchBtn');
+    btn.textContent = 'Fetch & Continue';
+    btn.disabled = false;
+    btn.onclick = scrapeUrl;
+    document.getElementById('importBackdrop').classList.remove('hidden');
+    document.getElementById('importUrl').focus();
+  }
+  function closeImportModal() {
+    closeCfPanel();
+    document.getElementById('importBackdrop').classList.add('hidden');
+  }
+  function importBackdropClick(e) {
+    if (e.target === document.getElementById('importBackdrop')) closeImportModal();
+  }
+
+  // ── Scraper ──
+  // ── Known-site API handlers ──────────────────────────────────────────────
+  // These hit official public APIs so Cloudflare is never in the picture.
+
+  async function tryMangaDex(url) {
+    // Match /title/<uuid> or /manga/<uuid>
+    const m = url.match(/mangadex\.org\/(?:title|manga)\/([\w-]{36})/i);
+    if (!m) return null;
+    const id = m[1];
+    const [mangaRes, coverRes] = await Promise.all([
+      fetch(`https://api.mangadex.org/manga/${id}?includes[]=author&includes[]=artist`),
+      fetch(`https://api.mangadex.org/manga/${id}/aggregate`).catch(() => null),
+    ]);
+    if (!mangaRes.ok) throw new Error('MangaDex API error ' + mangaRes.status);
+    const json = await mangaRes.json();
+    const data = json.data;
+    const attrs = data.attributes;
+    // Pick title by language preference
+    const langMap = { 'en': 'en', 'ja-ro': 'ja-ro', 'ja': 'ja', 'zh': 'zh', 'ko': 'ko', 'original': null };
+    const prefLang = langMap[settings.lang] || 'en';
+    const title = (prefLang && attrs.title[prefLang])
+      || attrs.title.en
+      || attrs.title['ja-ro']
+      || Object.values(attrs.title)[0] || '';
+    const authorRel = data.relationships.find(r => r.type === 'author');
+    const author = authorRel?.attributes?.name || '';
+    // Cover
+    const coverRel = data.relationships.find(r => r.type === 'cover_art');
+    let image = '';
+    if (coverRel?.attributes?.fileName) {
+      image = `https://uploads.mangadex.org/covers/${id}/${coverRel.attributes.fileName}.512.jpg`;
+    }
+    const desc = attrs.description?.en || Object.values(attrs.description || {})[0] || '';
+    const tags = (attrs.tags || []).map(t => t.attributes?.name?.en || Object.values(t.attributes?.name || {})[0] || '').filter(Boolean);
+    return { title, author, image, description: desc, tags, url };
+  }
+
+  async function tryAniList(url) {
+    // anilist.co/manga/<id>
+    const m = url.match(/anilist\.co\/manga\/(\d+)/i);
+    if (!m) return null;
+    const id = parseInt(m[1]);
+    const query = `query($id:Int){Media(id:$id,type:MANGA){title{romaji english}coverImage{large}staff(perPage:3){nodes{name{full}}}description(asHtml:false)genres tags(sort:RANK_DESC){name rank}}}`;
+    const res = await fetch('https://graphql.anilist.co', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query, variables: { id } }),
+    });
+    if (!res.ok) throw new Error('AniList API error ' + res.status);
+    const json = await res.json();
+    const media = json.data?.Media;
+    if (!media) throw new Error('AniList: no results');
+    // Pick title by language setting
+    const title = (settings.lang === 'ja' || settings.lang === 'ja-ro')
+      ? (media.title.romaji || media.title.english || '')
+      : (media.title.english || media.title.romaji || '');
+    const author = media.staff?.nodes?.[0]?.name?.full || '';
+    const image = media.coverImage?.large || '';
+    const description = media.description?.replace(/<[^>]*>/g, '') || '';
+    const tags = [
+      ...(media.genres || []),
+      ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name),
+    ];
+    return { title, author, image, description, tags, url };
+  }
+
+  async function searchAniListTags(title) {
+    try {
+      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){genres tags(sort:RANK_DESC){name rank}}}`;
+      const res = await Promise.race([
+        fetch('https://graphql.anilist.co', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ query, variables: { s: title } }),
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+      ]);
+      if (!res.ok) return [];
+      const json = await res.json();
+      const media = json.data?.Media;
+      if (!media) return [];
+      return [
+        ...(media.genres || []),
+        ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name),
+      ];
+    } catch(e) { return []; }
+  }
+
+  async function searchMangaUpdatesTags(title) {
+    try {
+      const res = await Promise.race([
+        fetch('https://api.mangaupdates.com/v1/series/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ search: title, perpage: 1 }),
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
+      ]);
+      if (!res.ok) return [];
+      const json = await res.json();
+      const record = json.results?.[0]?.record;
+      if (!record) return [];
+      const genres = (record.genres || []).map(g => g.genre).filter(Boolean);
+      const seriesId = record.series_id;
+      if (!seriesId) return genres;
+      try {
+        const catRes = await Promise.race([
+          fetch(`https://api.mangaupdates.com/v1/series/${seriesId}/categories`),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+        ]);
+        if (catRes.ok) {
+          const catJson = await catRes.json();
+          const cats = (catJson.categories || [])
+            .sort((a, b) => (b.votes_plus || 0) - (a.votes_plus || 0))
+            .slice(0, 12)
+            .map(c => c.category)
+            .filter(Boolean);
+          return [...new Set([...genres, ...cats])];
+        }
+      } catch(e) {}
+      return genres;
+    } catch(e) { return []; }
+  }
+
+  // ── CORS proxy waterfall ──────────────────────────────────────────────────
+  // Tries multiple proxies in order; first success wins.
+  const PROXIES = [
+    // 0. Local server proxy (web mode: npm run web) — fastest, most reliable
+    async (u) => {
+      const r = await fetch('/api/proxy?url=' + encodeURIComponent(u),
+        { signal: AbortSignal.timeout(12000) });
+      // 404 means we're not running the local server — skip silently
+      if (r.status === 404 || r.status === 0) throw new Error('no local server');
+      if (!r.ok) throw new Error('local proxy ' + r.status);
+      return r.text();
+    },
+    async (u) => {
+      const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(u));
+      if (!r.ok) throw new Error('allorigins ' + r.status);
+      const d = await r.json();
+      if (d.status?.http_code >= 400) throw new Error('site ' + d.status.http_code);
+      return d.contents;
+    },
+    async (u) => {
+      const r = await fetch('https://corsproxy.io/?' + encodeURIComponent(u));
+      if (!r.ok) throw new Error('corsproxy.io ' + r.status);
+      return r.text();
+    },
+    async (u) => {
+      const r = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u));
+      if (!r.ok) throw new Error('codetabs ' + r.status);
+      return r.text();
+    },
+    async (u) => {
+      const r = await fetch('https://thingproxy.freeboard.io/fetch/' + u);
+      if (!r.ok) throw new Error('thingproxy ' + r.status);
+      return r.text();
+    },
+  ];
+
+  async function fetchViaProxy(rawUrl, statusText) {
+    let cfHits = 0;
+    let lastErr = '';
+    for (let i = 0; i < PROXIES.length; i++) {
+      try {
+        statusText.textContent = `Trying proxy ${i + 1}/${PROXIES.length}…`;
+        const html = await Promise.race([
+          PROXIES[i](rawUrl),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+        ]);
+        if (isCloudflarePage(html)) { cfHits++; lastErr = 'Cloudflare challenge'; continue; }
+        return html;
+      } catch (e) {
+        lastErr = e.message;
+      }
+    }
+    const err = new Error(cfHits > 0
+      ? 'Cloudflare challenge blocked all proxies.'
+      : `All proxies failed (last: ${lastErr}).`);
+    err.cfDetected = cfHits > 0;
+    throw err;
+  }
+
+  function parseHtmlMeta(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const getMeta = (...props) => {
+      for (const p of props) {
+        const v = (
+          doc.querySelector(`meta[property="${p}"]`)?.getAttribute('content') ||
+          doc.querySelector(`meta[name="${p}"]`)?.getAttribute('content') || ''
+        ).trim();
+        if (v) return v;
+      }
+      return '';
+    };
+    const cleanStr = s => (s || '').replace(/\s+/g, ' ').trim();
+    const validAuthor = s => s && /\S/.test(s) && s.length > 1 && s.length < 120;
+
+    // Prefer span.pretty for sites like nhentai where h1 has [Artist] prefix
+    let title = cleanStr(doc.querySelector('span.pretty')?.textContent)
+      || getMeta('og:title', 'twitter:title') || doc.title || '';
+    // If the title is pipe-separated, pick based on language setting
+    title = pickTitle(title);
+    title = title.replace(/\s*[|\u2014\-]\s*[^\|\u2014\-]{1,30}$/, '').trim();
+    // Strip known site-name suffixes
+    const TITLE_STRIP_SUFFIXES = [
+      '- Free Hentai Comics Online',
+    ];
+    for (const suffix of TITLE_STRIP_SUFFIXES) {
+      if (title.endsWith(suffix)) { title = title.slice(0, -suffix.length).trim(); break; }
+    }
+    // Extract author from title brackets — ONLY a bracket at the very START is used as the
+    // author candidate (e.g. "[Stormfeder] 7TH Heaven"). End brackets are stripped unconditionally
+    // because they are typically labels ([English], [Digital]) or uploader tags ([Xzosk]),
+    // which are indistinguishable from real author names without a leading bracket for reference.
+    let titleBracketAuthor = '';
+    const _startBracket = title.match(/^\s*\[([^\]]+)\]/);
+    if (_startBracket) {
+      const candidate = _startBracket[1].trim();
+      if (validAuthor(candidate)) titleBracketAuthor = candidate;
+    }
+    // Strip every [...] from the title (start and end)
+    title = title.replace(/\s*\[([^\]]+)\]\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    const image = getMeta('og:image', 'twitter:image');
+    const description = getMeta('og:description', 'twitter:description', 'description');
+
+    let author = '';
+
+    // 1. Meta tags
+    for (const p of ['author', 'book:author', 'article:author', 'og:author']) {
+      const v = (doc.querySelector(`meta[property="${p}"]`)?.getAttribute('content') ||
+                 doc.querySelector(`meta[name="${p}"]`)?.getAttribute('content') || '').trim();
+      if (validAuthor(v)) { author = v; break; }
+    }
+
+    // 2. JSON-LD structured data
+    if (!author) {
+      for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+          const objs = [].concat(JSON.parse(script.textContent));
+          for (const obj of objs) {
+            const a = obj.author;
+            if (!a) continue;
+            const name = typeof a === 'string' ? a
+              : Array.isArray(a) ? (a[0]?.name || a[0])
+              : a.name;
+            const v = cleanStr(name);
+            if (validAuthor(v)) { author = v; break; }
+          }
+        } catch(e) {}
+        if (author) break;
+      }
+    }
+
+    // 3. Schema.org itemprop
+    if (!author) {
+      const el = doc.querySelector('[itemprop="author"] [itemprop="name"], [itemprop="author"]');
+      if (el) { const v = cleanStr(el.textContent); if (validAuthor(v)) author = v; }
+    }
+
+    // 4. Definition lists / table rows where a cell/dt contains "Author"
+    if (!author) {
+      for (const labelEl of doc.querySelectorAll('dt, th, td, b, strong')) {
+        if (!/^authors?[\s:]*$/i.test(labelEl.textContent.trim())) continue;
+        // dt → next dd
+        if (labelEl.tagName === 'DT') {
+          const dd = labelEl.nextElementSibling;
+          if (dd && dd.tagName === 'DD') { const v = cleanStr(dd.textContent); if (validAuthor(v)) { author = v; break; } }
+        }
+        // th/td → next sibling cell in same row
+        if (labelEl.tagName === 'TH' || labelEl.tagName === 'TD') {
+          const next = labelEl.nextElementSibling;
+          if (next) { const v = cleanStr(next.textContent); if (validAuthor(v)) { author = v; break; } }
+        }
+        // b/strong inside a td → parent td's next sibling
+        const parentCell = labelEl.closest('td, th');
+        if (parentCell) {
+          const next = parentCell.nextElementSibling;
+          if (next) { const v = cleanStr(next.textContent); if (validAuthor(v)) { author = v; break; } }
+        }
+        // Any element: try textContent of next sibling element
+        const nextSib = labelEl.nextElementSibling;
+        if (nextSib) { const v = cleanStr(nextSib.textContent); if (validAuthor(v)) { author = v; break; } }
+      }
+    }
+
+    // 5. nhentai-style tag-containers: find one labelled "Artists:" or "Author:"
+    if (!author) {
+      for (const container of doc.querySelectorAll('.tag-container, .field-name, [class*="tag-container"]')) {
+        const label = container.childNodes[0]?.textContent || container.querySelector('span:first-child, b, strong')?.textContent || '';
+        if (!/^artists?:|^authors?:/i.test(label.trim())) continue;
+        const nameEl = container.querySelector('span.name, a > span.name, a.tag span, a span');
+        if (nameEl) { const v = cleanStr(nameEl.textContent); if (validAuthor(v)) { author = v; break; } }
+      }
+    }
+
+    // 6. Extract artist from h1/h2 span.before like "[Ponsuke] "
+    if (!author) {
+      const before = doc.querySelector('h1 span.before, h2 span.before');
+      if (before) {
+        const v = cleanStr(before.textContent).replace(/^\[|\]\s*$/g, '').trim();
+        if (validAuthor(v)) author = v;
+      }
+    }
+
+    // 6b. .artist-content link (porncomics18-style); skip placeholder "updating"
+    if (!author) {
+      const artistEl = doc.querySelector('.artist-content a');
+      if (artistEl) {
+        const v = cleanStr(artistEl.textContent);
+        if (validAuthor(v) && v.toLowerCase() !== 'updating') author = v;
+      }
+    }
+
+    // 6d. <p>Artists</p> + next-sibling <div> containing <a> tags (HentaiNexus-style)
+    if (!author) {
+      for (const p of doc.querySelectorAll('p')) {
+        if (!/^artists?$|^authors?$/i.test(p.textContent.trim())) continue;
+        const sib = p.nextElementSibling;
+        if (!sib) continue;
+        const a = sib.querySelector('a');
+        if (a) { const v = cleanStr(a.textContent); if (validAuthor(v)) { author = v; break; } }
+      }
+    }
+
+    // 6c. Fallback: use [Author] extracted from title
+    if (!author && titleBracketAuthor) author = titleBracketAuthor;
+
+    // 7. Links pointing to an /author/ or /artist/ path, or elements with "author" in class
+    if (!author) {
+      for (const sel of [
+        'a[href*="/artist/"]', 'a[href*="/author/"]', 'a[href*="/author?"]',
+        '[class*="author-name"]', '[class*="authorName"]',
+        '[class*="manga-author"]', '[class*="comic-author"]',
+        '[id*="author"]',
+      ]) {
+        const el = doc.querySelector(sel);
+        if (!el) continue;
+        const v = cleanStr(el.textContent);
+        if (validAuthor(v)) { author = v; break; }
+      }
+    }
+
+    // Extract tags from nhentai/doujin-style tag containers (e.g. "Tags: action, romance")
+    const tags = [];
+    for (const container of doc.querySelectorAll('.tag-container, [class*="tag-container"]')) {
+      const labelText = (container.childNodes[0]?.textContent || '').trim();
+      if (!/^tags?:/i.test(labelText)) continue;
+      for (const nameEl of container.querySelectorAll('span.name')) {
+        const t = cleanStr(nameEl.textContent);
+        if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
+      }
+    }
+    // Extract tags from .tags-content / .genres-content links (e.g. porncomics18-style)
+    for (const container of doc.querySelectorAll('.tags-content, .genres-content')) {
+      for (const a of container.querySelectorAll('a')) {
+        const t = cleanStr(a.textContent);
+        if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
+      }
+    }
+    // Extract tags from <p>Tags</p> + next-sibling <div> containing <a> tags (HentaiNexus-style)
+    for (const p of doc.querySelectorAll('p')) {
+      if (!/^tags?$/i.test(p.textContent.trim())) continue;
+      const sib = p.nextElementSibling;
+      if (!sib) continue;
+      for (const a of sib.querySelectorAll('a')) {
+        const t = cleanStr(a.textContent);
+        if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
+      }
+    }
+
+    return { title, image, description, author, tags };
+  }
+
+  // ── Main scrape entry point ──────────────────────────────────────────────
+  async function scrapeUrl() {
+    const rawUrl = document.getElementById('importUrl').value.trim();
+    if (!rawUrl) {
+      document.getElementById('importUrl').style.borderColor = '#ef4444';
+      setTimeout(() => document.getElementById('importUrl').style.borderColor = '', 1500);
+      return;
+    }
+
+    const btn = document.getElementById('importFetchBtn');
+    const statusEl = document.getElementById('importStatus');
+    const resultEl = document.getElementById('importResult');
+    const statusText = document.getElementById('importStatusText');
+
+    btn.disabled = true;
+    btn.textContent = 'Fetching…';
+    statusEl.classList.remove('hidden');
+    statusText.textContent = 'Detecting site…';
+    resultEl.classList.add('hidden');
+
+    try {
+      let result = null;
+
+      // 1. Try known-site APIs first (no CF involved)
+      statusText.textContent = 'Checking for official API…';
+      result = await tryMangaDex(rawUrl).catch(() => null);
+      if (!result) result = await tryAniList(rawUrl).catch(() => null);
+
+      // 2. Direct fetch first (uses the user's own IP — fastest, no CORS on Electron)
+      if (!result) {
+        try {
+          statusText.textContent = 'Trying direct fetch…';
+          const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
+          const html = await resp.text();
+          if (isCloudflarePage(html)) {
+            const e = new Error('Cloudflare detected on direct fetch');
+            e.cfDetected = true;
+            throw e;
+          }
+          statusText.textContent = 'Parsing page…';
+          result = { ...parseHtmlMeta(html), url: rawUrl };
+        } catch (directErr) {
+          if (directErr.cfDetected) throw directErr; // escalate immediately
+          // Network error / CORS on non-Electron — fall through to proxies
+        }
+      }
+
+      // 3. Fall back to proxy waterfall + HTML meta parsing
+      if (!result) {
+        const html = await fetchViaProxy(rawUrl, statusText);
+        statusText.textContent = 'Parsing page…';
+        result = { ...parseHtmlMeta(html), url: rawUrl };
+      }
+
+      const { title, image, author, description } = result;
+
+      // Enrich tags from AniList + MangaUpdates if the page didn't provide any
+      if ((!result.tags || result.tags.length === 0) && title) {
+        statusText.textContent = 'Looking up tags…';
+        const [aniTags, muTags] = await Promise.allSettled([
+          searchAniListTags(title),
+          searchMangaUpdatesTags(title),
+        ]);
+        const combined = [
+          ...(aniTags.status === 'fulfilled' ? aniTags.value : []),
+          ...(muTags.status === 'fulfilled' ? muTags.value : []),
+        ];
+        if (combined.length) result.tags = [...new Set(combined)];
+      }
+
+      statusEl.classList.add('hidden');
+      showImportPreview(result, rawUrl);
+    } catch (err) {
+      statusEl.classList.add('hidden');
+      if (err.cfDetected) {
+        // Show brief notice then open in-app iframe panel
+        document.getElementById('cfDetectNotice').classList.remove('hidden');
+        btn.disabled = true;
+        btn.textContent = 'Opening panel…';
+        setTimeout(() => {
+          document.getElementById('cfDetectNotice').classList.add('hidden');
+          openCfPanel(rawUrl);
+          btn.disabled = false;
+          btn.textContent = 'Fetch & Continue';
+          btn.onclick = scrapeUrl;
+        }, 800);
+      } else {
+        statusEl.classList.remove('hidden');
+        statusText.textContent = '❌ ' + err.message;
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+        btn.onclick = () => scrapeUrl();
+      }
+    }
+  }
+
+  function isCloudflarePage(html) {
+    if (!html || typeof html !== 'string') return false;
+    // Only match actual challenge/interstitial pages — NOT pages that merely use CF
+    // cf_clearance appears in normal pages that already passed CF, so we exclude it
+    const hardMatch =
+      html.includes('__cf_chl_opt') ||          // CF challenge JS object
+      html.includes('cf-browser-verification') || // CF challenge form class
+      html.includes('cloudflare.com/cdn-cgi/challenge') || // challenge iframe src
+      /window\._cf_chl_ctx\b/.test(html);        // older CF challenge context
+    const softMatch =
+      /<title>[^<]*Just a moment/i.test(html) || // title is literally "Just a moment..."
+      /Checking your browser before accessing/i.test(html); // CF interstitial text
+    return hardMatch || softMatch;
+  }
+
+  // ── CF Webview Panel ──────────────────────────────────────────────────────
+  function openCfPanel(url) {
+    cfPanelUrl = url;
+    document.getElementById('importBackdrop').classList.add('hidden');
+    document.getElementById('cfPanelBackdrop').classList.remove('hidden');
+    document.getElementById('cfGrabBtn').disabled = false;
+
+    if (IS_ELECTRON) {
+      // ── Electron: use embedded webview ──
+      document.getElementById('cfWebview').style.display = '';
+      document.getElementById('cfServerStatus').classList.add('hidden');
+      document.getElementById('cfPanelSubtitle').textContent = 'Loading…';
+
+      const wv = document.getElementById('cfWebview');
+      clearInterval(cfPollInterval);
+      cfPollInterval = null;
+
+      function onReady() {
+        wv.removeEventListener('dom-ready', onReady);
+        document.getElementById('cfPanelSubtitle').textContent =
+          'Solve the challenge above — we\'ll detect when it\'s done automatically.';
+        cfPollInterval = setInterval(() => tryCfExtract(), 1500);
+      }
+      wv.addEventListener('dom-ready', onReady);
+      wv.src = url;
+
+    } else {
+      // ── Web mode: puppeteer window opened by local server ──
+      document.getElementById('cfWebview').style.display = 'none';
+      document.getElementById('cfServerStatus').classList.remove('hidden');
+      document.getElementById('cfPanelSubtitle').textContent = 'Solve the challenge in the Chrome window — detecting automatically…';
+      document.getElementById('cfServerStatusText').textContent = 'Opening Chrome window…';
+      document.getElementById('cfServerStatusSub').textContent =
+        'A Chrome window will open — solve the Cloudflare challenge there. ' +
+        'We\'ll detect when it\'s done and close the window automatically.';
+
+      fetch('/api/cf-open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      })
+        .then(r => r.json())
+        .then(({ sessionId, error }) => {
+          if (error) throw new Error(error);
+          cfServerSessionId = sessionId;
+          document.getElementById('cfServerStatusText').textContent = 'Chrome window is open — solve the challenge';
+          cfPollInterval = setInterval(() => tryCfExtract(), 2000);
+        })
+        .catch(err => {
+          document.getElementById('cfServerStatusText').textContent = '❌ ' + err.message;
+          document.getElementById('cfServerStatusSub').textContent =
+            'Make sure you started the app with: npm run web';
+        });
+    }
+  }
+
+  function closeCfPanel() {
+    clearInterval(cfPollInterval);
+    cfPollInterval = null;
+    cfPanelUrl = '';
+    cfServerSessionId = null;
+    if (IS_ELECTRON) {
+      const wv = document.getElementById('cfWebview');
+      try { wv.src = 'about:blank'; } catch(e) {}
+    }
+    document.getElementById('cfPanelBackdrop').classList.add('hidden');
+  }
+
+  async function tryCfExtract() {
+    const savedUrl = cfPanelUrl;
+    if (!savedUrl) return;
+
+    if (IS_ELECTRON) {
+      // ── Electron path: read HTML from webview ──
+      const wv = document.getElementById('cfWebview');
+      try {
+        const html = await wv.executeJavaScript('document.documentElement.outerHTML');
+        if (!html || isCloudflarePage(html)) {
+          document.getElementById('cfPanelSubtitle').textContent =
+            'Challenge active — solve it above, we\'ll detect when done…';
+          return;
+        }
+        clearInterval(cfPollInterval);
+        cfPollInterval = null;
+        const result = { ...parseHtmlMeta(html), url: savedUrl };
+        closeCfPanel();
+        document.getElementById('importBackdrop').classList.remove('hidden');
+        showImportPreview(result, savedUrl);
+      } catch(e) {
+        // Page still navigating or sandboxed — keep polling
+      }
+    } else {
+      // ── Web-server path: poll local API ──
+      if (!cfServerSessionId) return;
+      try {
+        const res = await fetch('/api/cf-result/' + cfServerSessionId);
+        const data = await res.json();
+        if (data.status === 'done') {
+          clearInterval(cfPollInterval);
+          cfPollInterval = null;
+          const result = { ...parseHtmlMeta(data.html), url: savedUrl };
+          closeCfPanel();
+          document.getElementById('importBackdrop').classList.remove('hidden');
+          showImportPreview(result, savedUrl);
+        } else if (data.status === 'error') {
+          clearInterval(cfPollInterval);
+          cfPollInterval = null;
+          document.getElementById('cfServerStatusText').textContent = '❌ ' + data.error;
+          document.getElementById('cfServerStatusSub').textContent = 'Close this panel and try again.';
+          document.getElementById('cfGrabBtn').disabled = false;
+        }
+        // status 'open' or 'notfound': keep polling
+      } catch(e) {
+        // network glitch — keep polling
+      }
+    }
+  }
+
+  async function cfGrabNow() {
+    document.getElementById('cfGrabBtn').disabled = true;
+    await tryCfExtract();
+    // Re-enable only if panel is still open (tryCfExtract didn’t close it)
+    const btn = document.getElementById('cfGrabBtn');
+    if (btn) btn.disabled = false;
+  }
+
+  function renderTagsPreview() {
+    const tags = document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean);
+    const el = document.getElementById('tagsPreview');
+    if (!tags.length) {
+      el.innerHTML = '<span class="tags-empty">No tags yet — click Lookup Tags or import from a link</span>';
+      return;
+    }
+    el.innerHTML = tags.map(t =>
+      `<span class="tag-pill-rm">${escHtml(t)}<span class="rm-x" title="Remove" onclick="removeTag(${JSON.stringify(t)})">×</span></span>`
+    ).join('');
+  }
+
+  function removeTag(tag) {
+    const cur = document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean);
+    document.getElementById('fTags').value = cur.filter(t => t !== tag).join(', ');
+    renderTagsPreview();
+  }
+
+  async function lookupFromAniList() {
+    const title = document.getElementById('fTitle').value.trim();
+    if (!title) { document.getElementById('fTitle').focus(); return; }
+    openLookupLog();
+    logLine(`🔍 "${title}" — AniList`, 'info');
+    logLine('⏳ Querying AniList…');
+    try {
+      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english}coverImage{large}staff(perPage:1){nodes{name{full}}}description(asHtml:false)genres tags(sort:RANK_DESC){name rank}}}`;
+      const res = await Promise.race([
+        fetch('https://graphql.anilist.co', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ query, variables: { s: title } }),
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+      ]);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      const media = json.data?.Media;
+      if (!media) throw new Error('no results');
+      const pickedTitle = media.title.english || media.title.romaji || '';
+      const author = media.staff?.nodes?.[0]?.name?.full || '';
+      const image = media.coverImage?.large || '';
+      const tags = [...(media.genres || []), ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name)];
+      if (pickedTitle) { document.getElementById('fTitle').value = pickedTitle; logLine(`📝 Title: ${pickedTitle}`, 'ok'); }
+      if (author) { document.getElementById('fAuthor').value = author; logLine(`✍️ Author: ${author}`, 'ok'); }
+      if (image) { document.getElementById('fThumb').value = image; previewThumb(); logLine('🖼️ Cover image updated', 'ok'); }
+      if (tags.length) {
+        const existing = document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean);
+        const merged = [...new Set([...existing, ...tags])];
+        document.getElementById('fTags').value = merged.join(', ');
+        renderTagsPreview();
+        logLine(`🏷️ ${tags.length} tags applied`, 'ok');
+      }
+      if (!pickedTitle && !author && !image && !tags.length) logLine('⚠️ No data found', 'err');
+    } catch(e) {
+      logLine('❌ AniList error: ' + e.message, 'err');
+    }
+  }
+
+  async function lookupFromMangaUpdates() {
+    const title = document.getElementById('fTitle').value.trim();
+    if (!title) { document.getElementById('fTitle').focus(); return; }
+    openLookupLog();
+    logLine(`🔍 "${title}" — MangaUpdates`, 'info');
+    logLine('⏳ Querying MangaUpdates…');
+    try {
+      const res = await Promise.race([
+        fetch('https://api.mangaupdates.com/v1/series/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ search: title, perpage: 1 }),
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+      ]);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      const record = json.results?.[0]?.record;
+      if (!record) throw new Error('no results');
+      const pickedTitle = record.title || '';
+      const author = (record.authors || [])[0]?.name || '';
+      const image = record.image?.url?.original || record.image?.url?.thumb || '';
+      const genres = (record.genres || []).map(g => g.genre).filter(Boolean);
+      let tags = [...genres];
+      const seriesId = record.series_id;
+      if (seriesId) {
+        try {
+          const catRes = await Promise.race([
+            fetch(`https://api.mangaupdates.com/v1/series/${seriesId}/categories`),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
+          ]);
+          if (catRes.ok) {
+            const catJson = await catRes.json();
+            const cats = (catJson.categories || []).sort((a,b)=>(b.votes_plus||0)-(a.votes_plus||0)).slice(0,12).map(c=>c.category).filter(Boolean);
+            tags = [...new Set([...tags, ...cats])];
+          }
+        } catch(_) {}
+      }
+      if (pickedTitle) { document.getElementById('fTitle').value = pickedTitle; logLine(`📝 Title: ${pickedTitle}`, 'ok'); }
+      if (author) { document.getElementById('fAuthor').value = author; logLine(`✍️ Author: ${author}`, 'ok'); }
+      if (image) { document.getElementById('fThumb').value = image; previewThumb(); logLine('🖼️ Cover image updated', 'ok'); }
+      if (tags.length) {
+        const existing = document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean);
+        const merged = [...new Set([...existing, ...tags])];
+        document.getElementById('fTags').value = merged.join(', ');
+        renderTagsPreview();
+        logLine(`🏷️ ${tags.length} tags applied`, 'ok');
+      }
+      if (!pickedTitle && !author && !image && !tags.length) logLine('⚠️ No data found', 'err');
+    } catch(e) {
+      logLine('❌ MangaUpdates error: ' + e.message, 'err');
+    }
+  }
+
+  async function lookupOnSite(site, title, entryId) {
+    openLookupLog();
+    const siteName = site === 'anilist' ? 'AniList' : 'MangaUpdates';
+    logLine(`🔍 "${title}" — ${siteName}`, 'info');
+    logLine('⏳ Looking up…');
+    try {
+      let result = null;
+      if (site === 'anilist') {
+        const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english}coverImage{large}staff(perPage:1){nodes{name{full}}}genres tags(sort:RANK_DESC){name rank}}}`;
+        const res = await Promise.race([
+          fetch('https://graphql.anilist.co', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ query, variables: { s: title } }),
+          }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+        ]);
+        if (res.ok) {
+          const json = await res.json();
+          const media = json.data?.Media;
+          if (media) {
+            result = {
+              title: media.title.english || media.title.romaji || '',
+              author: media.staff?.nodes?.[0]?.name?.full || '',
+              image: media.coverImage?.large || '',
+              tags: [...(media.genres || []), ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name)],
+            };
+          }
+        }
+      } else {
+        const res = await Promise.race([
+          fetch('https://api.mangaupdates.com/v1/series/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ search: title, perpage: 1 }),
+          }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
+        ]);
+        if (res.ok) {
+          const json = await res.json();
+          const record = json.results?.[0]?.record;
+          if (record) {
+            result = {
+              title: record.title || '',
+              author: (record.authors || [])[0]?.name || '',
+              image: record.image?.url?.original || record.image?.url?.thumb || '',
+              tags: (record.genres || []).map(g => g.genre).filter(Boolean),
+            };
+          }
+        }
+      }
+      if (!result) { logLine('⚠️ No results found', 'err'); return; }
+      if (result.title) logLine(`📝 Title: ${result.title}`, 'ok');
+      if (result.author) logLine(`✍️ Author: ${result.author}`, 'ok');
+      if (result.image) logLine('🖼️ Cover image found', 'ok');
+      if (result.tags.length) logLine(`🏷️ Tags: ${result.tags.slice(0,6).join(', ')}${result.tags.length > 6 ? '…' : ''}`, 'ok');
+      // Inject an Apply button into the log
+      const applyBtn = document.createElement('button');
+      applyBtn.className = 'btn btn-primary';
+      applyBtn.style.cssText = 'margin-top:8px;font-size:0.78rem;padding:4px 14px';
+      applyBtn.textContent = '➕ Apply to entry';
+      applyBtn.onclick = () => {
+        const entry = entries.find(x => x.id === entryId);
+        if (!entry) return;
+        if (result.title) entry.title = result.title;
+        if (result.author) entry.author = result.author;
+        if (result.image) entry.thumb = result.image;
+        if (result.tags.length) entry.tags = [...new Set([...(entry.tags || []), ...result.tags])];
+        saveEntries();
+        renderEntries();
+        logLine('✅ Applied to entry!', 'ok');
+        applyBtn.disabled = true;
+        applyBtn.textContent = '✔ Applied';
+      };
+      document.getElementById('lookupLogBody').appendChild(applyBtn);
+    } catch(e) {
+      logLine('❌ Error: ' + e.message, 'err');
+    }
+  }
+
+  function openOnSite(site, title) {
+    if (!title || !title.trim()) return;
+    const q = encodeURIComponent(title.trim());
+    const url = site === 'anilist'
+      ? `https://anilist.co/search/manga?search=${q}`
+      : `https://www.mangaupdates.com/series.html?search=${q}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  function openLookupLog() {
+    document.getElementById('lookupLogBody').innerHTML = '';
+    document.getElementById('lookupLog').classList.add('open');
+  }
+  function closeLookupLog() {
+    document.getElementById('lookupLog').classList.remove('open');
+  }
+  function logLine(msg, type = '') {
+    const el = document.createElement('div');
+    el.className = 'log-line' + (type ? ' ' + type : '');
+    el.textContent = msg;
+    const body = document.getElementById('lookupLogBody');
+    body.appendChild(el);
+    body.scrollTop = body.scrollHeight;
+  }
+
+  async function lookupTags() {
+    const title = document.getElementById('fTitle').value.trim();
+    if (!title) {
+      document.getElementById('fTitle').focus();
+      document.getElementById('fTitle').style.borderColor = '#ef4444';
+      setTimeout(() => document.getElementById('fTitle').style.borderColor = '', 1500);
+      return;
+    }
+    openLookupLog();
+    logLine(`🔍 "${title}"`, 'info');
+    logLine('⏳ Querying AniList & MangaUpdates…');
+    const btn = document.getElementById('lookupTagsBtn');
+    btn.disabled = true;
+    try {
+      const [aniRes, muRes] = await Promise.allSettled([
+        searchAniListTags(title),
+        searchMangaUpdatesTags(title),
+      ]);
+      const aniTags = aniRes.status === 'fulfilled' ? aniRes.value : [];
+      const muTags  = muRes.status  === 'fulfilled' ? muRes.value  : [];
+      if (aniRes.status === 'fulfilled')
+        logLine(aniTags.length ? `✅ AniList: ${aniTags.length} tags — ${aniTags.slice(0,5).join(', ')}${aniTags.length > 5 ? '…' : ''}` : '⚠️ AniList: no match', aniTags.length ? 'ok' : 'err');
+      else
+        logLine('❌ AniList: request failed', 'err');
+      if (muRes.status === 'fulfilled')
+        logLine(muTags.length ? `✅ MangaUpdates: ${muTags.length} tags — ${muTags.slice(0,5).join(', ')}${muTags.length > 5 ? '…' : ''}` : '⚠️ MangaUpdates: no match', muTags.length ? 'ok' : 'err');
+      else
+        logLine('❌ MangaUpdates: request failed', 'err');
+      const fresh = [...aniTags, ...muTags];
+      if (fresh.length) {
+        const existing = document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean);
+        const merged = [...new Set([...existing, ...fresh])];
+        document.getElementById('fTags').value = merged.join(', ');
+        renderTagsPreview();
+        logLine(`➕ Applied ${fresh.length} tags (${merged.length} total)`, 'ok');
+        btn.disabled = false;
+      } else {
+        logLine('⚠️ No tags found from either source', 'err');
+        btn.disabled = false;
+      }
+    } catch (e) {
+      logLine('❌ Unexpected error: ' + e.message, 'err');
+      btn.disabled = false;
+    }
+  }
+
+  function showImportPreview(result, url) {
+    const { title = '', image = '', author = '', description = '', tags = [] } = result;
+    const rThumb = document.getElementById('importResultThumb');
+    rThumb.innerHTML = image
+      ? `<img src="${escHtml(image)}" onerror="this.parentElement.innerHTML='\ud83d\udcd6'" alt="cover" />`
+      : '\ud83d\udcd6';
+    document.getElementById('importResultTitle').textContent = title || '(No title found)';
+    document.getElementById('importResultAuthor').textContent = author ? 'by ' + author : '(Author not detected)';
+    document.getElementById('importResultTags').innerHTML = tags.length
+      ? tags.slice(0,15).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('')
+      : '';
+    document.getElementById('importStatus').classList.add('hidden');
+    document.getElementById('importResult').classList.remove('hidden');
+    const btn = document.getElementById('importFetchBtn');
+    btn.disabled = false;
+    btn.textContent = 'Use this \u0026 Edit';
+    btn.onclick = () => applyScrapedData({ title, image, author, description, tags, url });
+  }
+
+  function useManualFill() {
+    const title = document.getElementById('mfTitle').value.trim();
+    const author = document.getElementById('mfAuthor').value.trim();
+    const image = document.getElementById('mfThumb').value.trim();
+    const url = document.getElementById('importUrl').value.trim();
+    applyScrapedData({ title, author, image, description: '', url });
+  }
+
+  function applyScrapedData({ title, image, author, description, tags, url }) {
+    closeImportModal();
+    openModal();
+    document.getElementById('fTitle').value = title || '';
+    document.getElementById('fAuthor').value = author || '';
+    document.getElementById('fLink').value = url || '';
+    document.getElementById('fThumb').value = image || '';
+    document.getElementById('fTags').value = (tags || []).join(', ');
+    renderTagsPreview();
+    previewThumb();
+  }
+
+  // ── Keyboard ──
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeModal(); closeImportModal(); closeImportMenu(); closeCfPanel(); closeSauceModal(); closeSettings(); if (!batchRunning) closeBatchImport(); }
+  });
+
+  // ── Export ──────────────────────────────────────────────────────────────────
+  function exportEntries() {
+    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mangalist-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ── Batch Import ─────────────────────────────────────────────────────────────
+  let batchRunning = false;
+  let batchAborted = false;
+
+  function openBatchImport() {
+    batchRunning = false;
+    batchAborted = false;
+    document.getElementById('batchStep1').classList.remove('hidden');
+    document.getElementById('batchStep2').classList.add('hidden');
+    document.getElementById('batchStartBtn').textContent = 'Start Import';
+    document.getElementById('batchStartBtn').disabled = false;
+    document.getElementById('batchStartBtn').onclick = runBatchImport;
+    document.getElementById('batchCancelBtn').textContent = 'Cancel';
+    document.getElementById('batchCancelBtn').classList.remove('hidden');
+    document.getElementById('batchLog').innerHTML = '';
+    document.getElementById('batchBackdrop').classList.remove('hidden');
+  }
+
+  function closeBatchImport() {
+    if (batchRunning) batchAborted = true;
+    document.getElementById('batchBackdrop').classList.add('hidden');
+  }
+
+  function batchLoadFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      const text = ev.target.result;
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed) && parsed[0]?.id && parsed[0]?.title) {
+          // JSON backup — restore directly without re-scraping
+          let added = 0;
+          parsed.forEach(p => {
+            if (p.id && p.title && !entries.find(e => e.id === p.id)) {
+              entries.push(p);
+              added++;
+            }
+          });
+          save();
+          renderEntries();
+          closeBatchImport();
+          alert(`Restored ${added} entr${added !== 1 ? 'ies' : 'y'} from backup (${parsed.length - added} duplicate${parsed.length - added !== 1 ? 's' : ''} skipped).`);
+          return;
+        }
+      } catch(_) {}
+      // Plain text — put lines into textarea
+      document.getElementById('batchUrls').value = text.trim();
+      input.value = '';
+    };
+    reader.readAsText(file);
+  }
+
+  // Headless scrape — same pipeline as scrapeUrl() but returns result, no UI side-effects.
+  async function fetchEntryData(rawUrl) {
+    const dummy = { textContent: '' }; // satisfy fetchViaProxy progress arg
+    let result = null;
+    result = await tryMangaDex(rawUrl).catch(() => null);
+    if (!result) result = await tryAniList(rawUrl).catch(() => null);
+    if (!result) {
+      try {
+        const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
+        const html = await resp.text();
+        if (isCloudflarePage(html)) {
+          const ce = new Error('Cloudflare challenge — skipped in bulk mode');
+          ce.cfDetected = true;
+          throw ce;
+        }
+        result = { ...parseHtmlMeta(html), url: rawUrl };
+      } catch (directErr) {
+        if (directErr.cfDetected) throw directErr;
+        // CORS / network — fall through to proxies
+      }
+    }
+    if (!result) {
+      const html = await fetchViaProxy(rawUrl, dummy);
+      result = { ...parseHtmlMeta(html), url: rawUrl };
+    }
+    if ((!result.tags || result.tags.length === 0) && result.title) {
+      const [a, m] = await Promise.allSettled([
+        searchAniListTags(result.title),
+        searchMangaUpdatesTags(result.title),
+      ]);
+      const combined = [
+        ...(a.status === 'fulfilled' ? a.value : []),
+        ...(m.status === 'fulfilled' ? m.value : []),
+      ];
+      if (combined.length) result.tags = [...new Set(combined)];
+    }
+    return result;
+  }
+
+  // For plain names (not URLs): search AniList for title/cover/tags.
+  async function fetchEntryDataByName(name) {
+    try {
+      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english native}coverImage{large}staff(perPage:1){nodes{name{full}}}genres tags(sort:RANK_DESC){name rank}}}`;
+      const res = await fetch('https://graphql.anilist.co', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ query, variables: { s: name } }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const media = json.data?.Media;
+        if (media) {
+          const lm = { en: 'english', 'ja-ro': 'romaji', ja: 'native', zh: 'romaji', ko: 'romaji' };
+          const title = media.title[lm[settings.lang]] || media.title.english || media.title.romaji || name;
+          const image = media.coverImage?.large || '';
+          const author = media.staff?.nodes?.[0]?.name?.full || '';
+          const tags = [...(media.genres || []), ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name)];
+          return { title, image, author, description: '', tags, url: '' };
+        }
+      }
+    } catch(_) {}
+    return { title: name, image: '', author: '', description: '', tags: [], url: '' };
+  }
+
+  function batchLogItem(icon, html) {
+    const el = document.createElement('div');
+    el.className = 'batch-log-item';
+    el.innerHTML = `<span class="batch-log-icon">${icon}</span><span class="batch-log-text">${html}</span>`;
+    const log = document.getElementById('batchLog');
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+    return el;
+  }
+
+  async function runBatchImport() {
+    const lines = document.getElementById('batchUrls').value
+      .split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+
+    const defaultStatus = document.getElementById('batchStatus').value;
+    const delay = parseInt(document.getElementById('batchDelay').value) || 2000;
+
+    document.getElementById('batchStep1').classList.add('hidden');
+    document.getElementById('batchStep2').classList.remove('hidden');
+    document.getElementById('batchStartBtn').disabled = true;
+    document.getElementById('batchStartBtn').textContent = 'Importing…';
+    document.getElementById('batchCancelBtn').textContent = 'Stop';
+    document.getElementById('batchProgressFill').style.width = '0%';
+    document.getElementById('batchLog').innerHTML = '';
+    batchRunning = true;
+    batchAborted = false;
+
+    let added = 0, skipped = 0, failed = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      if (batchAborted) break;
+      const input = lines[i];
+      const isUrl = /^https?:\/\//i.test(input);
+      const displayInput = input.length > 70 ? input.slice(0, 70) + '…' : input;
+
+      document.getElementById('batchProgressFill').style.width = (i / lines.length * 100) + '%';
+      document.getElementById('batchProgressText').textContent = `${i + 1} / ${lines.length}`;
+
+      const logEl = batchLogItem('⏳', `<strong>${escHtml(displayInput)}</strong>`);
+
+      try {
+        const result = isUrl
+          ? await fetchEntryData(input)
+          : await fetchEntryDataByName(input);
+
+        const title = result.title || input;
+        const isDupe = entries.some(e =>
+          (result.url && e.link === result.url) ||
+          e.title.toLowerCase() === title.toLowerCase()
+        );
+
+        if (isDupe) {
+          logEl.querySelector('.batch-log-icon').textContent = '⚠️';
+          logEl.querySelector('.batch-log-text').innerHTML = `Skipped (duplicate): <strong>${escHtml(title)}</strong>`;
+          skipped++;
+        } else {
+          const entry = {
+            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            title,
+            author: result.author || '',
+            link: result.url || (isUrl ? input : ''),
+            thumb: result.image || '',
+            status: defaultStatus,
+            notes: '',
+            progressType: 'chapters',
+            chaptersRead: null, chaptersTotal: null,
+            volumesRead: null, volumesTotal: null,
+            tags: result.tags || [],
+            dateAdded: Date.now(),
+          };
+          entries.push(entry);
+          save();
+          if (settings.cacheImages && entry.thumb) cacheThumb(entry.id, entry.thumb);
+          logEl.querySelector('.batch-log-icon').textContent = '✅';
+          logEl.querySelector('.batch-log-text').innerHTML = `Added: <strong>${escHtml(title)}</strong>`;
+          added++;
+        }
+      } catch (err) {
+        const icon = err.cfDetected ? '🛡️' : '❌';
+        const msg = err.cfDetected ? 'Cloudflare protected — skipped' : `Failed: ${escHtml(err.message)}`;
+        logEl.querySelector('.batch-log-icon').textContent = icon;
+        logEl.querySelector('.batch-log-text').innerHTML = `${msg} <span style="opacity:0.6">${escHtml(displayInput)}</span>`;
+        failed++;
+      }
+
+      if (i < lines.length - 1 && !batchAborted) {
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+
+    batchRunning = false;
+    document.getElementById('batchProgressFill').style.width = '100%';
+    document.getElementById('batchProgressText').textContent =
+      batchAborted
+        ? `Stopped — ${added} added, ${skipped} skipped, ${failed} failed`
+        : `Done — ${added} added, ${skipped} skipped, ${failed} failed`;
+    document.getElementById('batchStartBtn').textContent = 'Close';
+    document.getElementById('batchStartBtn').disabled = false;
+    document.getElementById('batchStartBtn').onclick = closeBatchImport;
+    document.getElementById('batchCancelBtn').classList.add('hidden');
+    renderEntries();
+  }
+
+  // ── Init ──
+  renderEntries();
+</script>
+
+<!-- ── Lookup Log Panel ── -->
+<div id="lookupLog" class="lookup-log" role="log" aria-live="polite">
+  <div class="lookup-log-header">
+    <span>🔍 Tag Lookup</span>
+    <button class="lookup-log-close" onclick="closeLookupLog()" title="Close">✕</button>
+  </div>
+  <div class="lookup-log-body" id="lookupLogBody"></div>
+</div>
+</body>
+</html>

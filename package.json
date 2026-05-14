@@ -1,0 +1,67 @@
+{
+  "name": "vlt-tracker",
+  "version": "1.0.0",
+  "description": "VLT Tracker — a local manga/doujin library tracker with import, tagging, and API integrations",
+  "main": "main.js",
+  "author": "jt-ito",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "web": "node server.js",
+    "dist": "electron-builder --win",
+    "dist:all": "electron-builder --win --linux --mac"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "puppeteer-core": "^22.0.0"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.jteaito.vlt-tracker",
+    "productName": "VLT Tracker",
+    "copyright": "Copyright © 2026 jt-ito",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "server.js",
+      "package.json",
+      "package-lock.json",
+      "extensions/**/*",
+      "node_modules/**/*",
+      "!node_modules/electron-builder/**",
+      "!node_modules/electron/dist/**",
+      "!dist/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "VLT-Tracker-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "VLT-Tracker-Portable-${version}.exe"
+    }
+  }
+}
