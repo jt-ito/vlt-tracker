@@ -358,7 +358,7 @@ app.get('/api/cf-result/:id', (req, res) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || process.env.VLT_INTERNAL_PORT || 3000;
 app.listen(PORT, () => {
   const url = `http://localhost:${PORT}`;
   console.log(`\n📚 MangaList running at ${url}\n`);

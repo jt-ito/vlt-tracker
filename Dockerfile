@@ -14,8 +14,12 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 
 # Copy app source (no Electron files needed for web mode)
-COPY index.html server.js ./
+COPY index.html server.js login.html ./
 COPY extensions/ ./extensions/
+
+# Run as non-root user
+RUN addgroup -S vlt && adduser -S vlt -G vlt && chown -R vlt:vlt /app
+USER vlt
 
 EXPOSE 3000
 ENV NODE_ENV=production
