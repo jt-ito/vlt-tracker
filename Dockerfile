@@ -1,6 +1,8 @@
 # ── Stage 1: install production deps ─────────────────────────────────────────
 FROM node:20-alpine AS deps
 WORKDIR /app
+# python3 + make + g++ are required to compile better-sqlite3 (native addon)
+RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 RUN npm ci --omit=dev
 
