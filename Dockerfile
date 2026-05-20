@@ -17,10 +17,6 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY index.html server.js login.html ./
 COPY extensions/ ./extensions/
 
-# Run as non-root user
-RUN addgroup -S vlt && adduser -S vlt -G vlt && chown -R vlt:vlt /app
-USER vlt
-
 EXPOSE 3000
 ENV NODE_ENV=production
 
