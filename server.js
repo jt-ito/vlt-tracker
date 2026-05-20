@@ -87,6 +87,7 @@ if (fs.existsSync(SECRET_FILE)) {
 const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const BCRYPT_ROUNDS  = 12;
 const isProd         = process.env.NODE_ENV === 'production';
+const secureCookie   = process.env.VLT_HTTPS === 'true';
 
 // ─── Login rate limiter — 10 attempts per 15 min per IP ───────────────────────
 const loginLimiter = new RateLimiterMemory({
@@ -116,7 +117,7 @@ app.use(session({
   cookie: {
     httpOnly: true,           // JS cannot read the cookie
     sameSite: 'strict',       // blocks CSRF via cross-site requests
-    secure: isProd,           // HTTPS only in production
+      secure: secureCookie,      // set VLT_HTTPS=true when behind an HTTPS reverse proxy
     maxAge: SESSION_TTL_MS,
   },
 }));
