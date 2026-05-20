@@ -86,8 +86,8 @@ if (fs.existsSync(SECRET_FILE)) {
 
 const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const BCRYPT_ROUNDS  = 12;
-const isProd         = process.env.NODE_ENV === 'production';
-const secureCookie   = process.env.VLT_HTTPS === 'true';
+// HTTPS is required by default. Set VLT_HTTPS=false to allow plain HTTP (e.g. during local dev).
+const httpsRequired  = process.env.VLT_HTTPS !== 'false';
 
 // ─── Login rate limiter — 10 attempts per 15 min per IP ───────────────────────
 const loginLimiter = new RateLimiterMemory({
@@ -97,6 +97,19 @@ const loginLimiter = new RateLimiterMemory({
 
 // ─── Express app ─────────────────────────────────────────────────────────────
 const app = express();
+
+// Trust the first reverse-proxy (needed for req.secure and correct IP with X-Forwarded-For)
+app.set('trust proxy', 1);
+
+// Redirect HTTP → HTTPS when HTTPS is required
+if (httpsRequired) {
+  app.use((req, res, next) => {
+    if (!req.secure) {
+      return res.redirect(301, 'https://' + req.hostname + req.originalUrl);
+    }
+    next();
+  });
+}
 
 // Security headers
 app.use(helmet({
@@ -117,7 +130,7 @@ app.use(session({
   cookie: {
     httpOnly: true,           // JS cannot read the cookie
     sameSite: 'strict',       // blocks CSRF via cross-site requests
-      secure: secureCookie,      // set VLT_HTTPS=true when behind an HTTPS reverse proxy
+      secure: httpsRequired,     // false only when VLT_HTTPS=false
     maxAge: SESSION_TTL_MS,
   },
 }));
