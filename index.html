@@ -1570,14 +1570,14 @@
             <div class="settings-label">NH API Key</div>
             <div class="settings-desc">Used to authenticate with the NH API. Encrypted with AES-256-GCM and stored locally — never saved as plaintext.</div>
           </div>
-          <div style="display:flex;gap:6px;align-items:center">
+          <form autocomplete="off" onsubmit="saveNhKey();return false" style="display:flex;gap:6px;align-items:center">
             <div style="position:relative;flex:1;min-width:0">
               <input type="password" id="settingNhKey" class="themed-input" placeholder="Paste API key…" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;padding-right:38px" />
-              <button class="btn btn-icon" id="nhKeyEyeBtn" onclick="toggleNhKeyVisibility()" title="Show / hide" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:0.95rem;padding:2px 5px;background:none;border:none;cursor:pointer;opacity:0.6">&#128065;</button>
+              <button type="button" class="btn btn-icon" id="nhKeyEyeBtn" onclick="toggleNhKeyVisibility()" title="Show / hide" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:0.95rem;padding:2px 5px;background:none;border:none;cursor:pointer;opacity:0.6">&#128065;</button>
             </div>
-            <button class="btn btn-primary" id="saveNhKeyBtn" onclick="saveNhKey()" style="white-space:nowrap;flex-shrink:0">Save</button>
-            <button class="btn btn-ghost" onclick="clearNhKey()" style="white-space:nowrap;flex-shrink:0">Clear</button>
-          </div>
+            <button type="submit" class="btn btn-primary" id="saveNhKeyBtn" style="white-space:nowrap;flex-shrink:0">Save</button>
+            <button type="button" class="btn btn-ghost" onclick="clearNhKey()" style="white-space:nowrap;flex-shrink:0">Clear</button>
+          </form>
         </div>
 
         <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
@@ -1585,14 +1585,14 @@
             <div class="settings-label">MangaDex API Key</div>
             <div class="settings-desc">Personal client token for the MangaDex API. Encrypted with AES-256-GCM and stored locally — never saved as plaintext.</div>
           </div>
-          <div style="display:flex;gap:6px;align-items:center">
+          <form autocomplete="off" onsubmit="saveMdxKey();return false" style="display:flex;gap:6px;align-items:center">
             <div style="position:relative;flex:1;min-width:0">
               <input type="password" id="settingMdxKey" class="themed-input" placeholder="Paste API key…" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;padding-right:38px" />
-              <button class="btn btn-icon" id="mdxKeyEyeBtn" onclick="toggleMdxKeyVisibility()" title="Show / hide" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:0.95rem;padding:2px 5px;background:none;border:none;cursor:pointer;opacity:0.6">&#128065;</button>
+              <button type="button" class="btn btn-icon" id="mdxKeyEyeBtn" onclick="toggleMdxKeyVisibility()" title="Show / hide" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:0.95rem;padding:2px 5px;background:none;border:none;cursor:pointer;opacity:0.6">&#128065;</button>
             </div>
-            <button class="btn btn-primary" id="saveMdxKeyBtn" onclick="saveMdxKey()" style="white-space:nowrap;flex-shrink:0">Save</button>
-            <button class="btn btn-ghost" onclick="clearMdxKey()" style="white-space:nowrap;flex-shrink:0">Clear</button>
-          </div>
+            <button type="submit" class="btn btn-primary" id="saveMdxKeyBtn" style="white-space:nowrap;flex-shrink:0">Save</button>
+            <button type="button" class="btn btn-ghost" onclick="clearMdxKey()" style="white-space:nowrap;flex-shrink:0">Clear</button>
+          </form>
         </div>
 
       </div>
@@ -1713,73 +1713,47 @@
     document.getElementById('settingsBackdrop').classList.add('hidden');
   }
 
-  // ── Encrypted secrets (AES-256-GCM via Web Crypto) ──
-  // A random 256-bit device key is generated once and stored in mangaKeystore.
-  // Secrets are encrypted with that key + a fresh IV each save; the ciphertext
-  // and IV live in mangaSecrets.  Neither the key nor the plaintext is ever
-  // stored directly as a readable string.
-  function _hexToBytes(hex) {
-    return new Uint8Array(hex.match(/.{2}/g).map(b => parseInt(b, 16)));
-  }
-  function _bytesToHex(buf) {
-    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-  async function _getDeviceKey() {
-    let stored = localStorage.getItem('mangaKeystore');
-    if (!stored) {
-      const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
-      const raw = await crypto.subtle.exportKey('raw', key);
-      stored = _bytesToHex(raw);
-      localStorage.setItem('mangaKeystore', stored);
-    }
-    return crypto.subtle.importKey('raw', _hexToBytes(stored), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-  }
-  async function _encryptSecret(plaintext) {
-    const key = await _getDeviceKey();
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plaintext));
-    return { ct: _bytesToHex(ct), iv: _bytesToHex(iv) };
-  }
-  async function _decryptSecret(ctHex, ivHex) {
-    const key = await _getDeviceKey();
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: _hexToBytes(ivHex) }, key, _hexToBytes(ctHex));
-    return new TextDecoder().decode(pt);
-  }
-  function _getSecrets() { return JSON.parse(localStorage.getItem('mangaSecrets') || '{}'); }
-  function _saveSecrets(obj) { localStorage.setItem('mangaSecrets', JSON.stringify(obj)); }
+  // ── Server-side secrets (API keys stored server-side, never in the browser) ──
+  // Keys are saved to the server via POST /api/secrets/:name and encrypted
+  // server-side with AES-256-GCM using a per-user derived key.
+  // The plaintext is never returned to the client after saving.
 
-  async function getNhApiKey() {
-    const s = _getSecrets();
-    if (!s.nhKey) return null;
-    try { return await _decryptSecret(s.nhKey.ct, s.nhKey.iv); } catch { return null; }
-  }
   async function loadNhKeyField() {
-    const key = await getNhApiKey();
     const el = document.getElementById('settingNhKey');
-    el.value = key || '';
+    el.value = '';
+    el.placeholder = 'Paste API key…';
     el.type = 'password';
     document.getElementById('nhKeyEyeBtn').textContent = '\u{1F441}';
+    try {
+      const r = await fetch('/api/secrets/nh-key/status');
+      const d = await r.json();
+      if (d.saved) el.placeholder = '••••• (saved — paste to replace)';
+    } catch {}
   }
   async function saveNhKey() {
     const val = document.getElementById('settingNhKey').value.trim();
-    const secrets = _getSecrets();
-    if (val) {
-      secrets.nhKey = await _encryptSecret(val);
-    } else {
-      delete secrets.nhKey;
-    }
-    _saveSecrets(secrets);
+    if (!val) return;
     const btn = document.getElementById('saveNhKeyBtn');
-    const orig = btn.textContent;
-    btn.textContent = 'Saved \u2713';
     btn.disabled = true;
-    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    try {
+      const r = await fetch('/api/secrets/nh-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: val }),
+      });
+      if (r.ok) {
+        document.getElementById('settingNhKey').value = '';
+        btn.textContent = 'Saved \u2713';
+        setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; loadNhKeyField(); }, 1500);
+      } else {
+        btn.disabled = false;
+      }
+    } catch { btn.disabled = false; }
   }
-  function clearNhKey() {
-    const secrets = _getSecrets();
-    delete secrets.nhKey;
-    _saveSecrets(secrets);
+  async function clearNhKey() {
+    await fetch('/api/secrets/nh-key', { method: 'DELETE' });
     document.getElementById('settingNhKey').value = '';
+    loadNhKeyField();
   }
   function toggleNhKeyVisibility() {
     const el = document.getElementById('settingNhKey');
@@ -1793,38 +1767,42 @@
     }
   }
 
-  async function getMdxApiKey() {
-    const s = _getSecrets();
-    if (!s.mdxKey) return null;
-    try { return await _decryptSecret(s.mdxKey.ct, s.mdxKey.iv); } catch { return null; }
-  }
   async function loadMdxKeyField() {
-    const key = await getMdxApiKey();
     const el = document.getElementById('settingMdxKey');
-    el.value = key || '';
+    el.value = '';
+    el.placeholder = 'Paste API key…';
     el.type = 'password';
     document.getElementById('mdxKeyEyeBtn').textContent = '\u{1F441}';
+    try {
+      const r = await fetch('/api/secrets/mdx-key/status');
+      const d = await r.json();
+      if (d.saved) el.placeholder = '••••• (saved — paste to replace)';
+    } catch {}
   }
   async function saveMdxKey() {
     const val = document.getElementById('settingMdxKey').value.trim();
-    const secrets = _getSecrets();
-    if (val) {
-      secrets.mdxKey = await _encryptSecret(val);
-    } else {
-      delete secrets.mdxKey;
-    }
-    _saveSecrets(secrets);
+    if (!val) return;
     const btn = document.getElementById('saveMdxKeyBtn');
-    const orig = btn.textContent;
-    btn.textContent = 'Saved \u2713';
     btn.disabled = true;
-    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    try {
+      const r = await fetch('/api/secrets/mdx-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: val }),
+      });
+      if (r.ok) {
+        document.getElementById('settingMdxKey').value = '';
+        btn.textContent = 'Saved \u2713';
+        setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; loadMdxKeyField(); }, 1500);
+      } else {
+        btn.disabled = false;
+      }
+    } catch { btn.disabled = false; }
   }
-  function clearMdxKey() {
-    const secrets = _getSecrets();
-    delete secrets.mdxKey;
-    _saveSecrets(secrets);
+  async function clearMdxKey() {
+    await fetch('/api/secrets/mdx-key', { method: 'DELETE' });
     document.getElementById('settingMdxKey').value = '';
+    loadMdxKeyField();
   }
   function toggleMdxKeyVisibility() {
     const el = document.getElementById('settingMdxKey');

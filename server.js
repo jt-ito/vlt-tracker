@@ -32,6 +32,14 @@ db.exec(`
     data   TEXT    NOT NULL,
     expire INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS secrets (
+    user_id    INTEGER NOT NULL,
+    key_name   TEXT    NOT NULL,
+    ciphertext TEXT    NOT NULL,
+    iv         TEXT    NOT NULL,
+    PRIMARY KEY (user_id, key_name),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 `);
 
 // Purge expired sessions every minute
@@ -228,6 +236,85 @@ app.post('/api/auth/logout', (req, res) => {
     res.json({ ok: true });
   });
 });
+
+// ─── Server-side secrets (API keys stored encrypted in DB) ───────────────────
+// Keys are encrypted with AES-256-GCM using a per-user key derived from the
+// session secret + user ID.  The plaintext never leaves the server.
+
+const ALGO = 'aes-256-gcm';
+
+function _deriveUserKey(userId) {
+  // 32-byte key: HMAC-SHA256(session_secret, user_id)
+  return crypto.createHmac('sha256', SESSION_SECRET).update(String(userId)).digest();
+}
+
+function _encryptSecret(userId, plaintext) {
+  const key = _deriveUserKey(userId);
+  const iv  = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(ALGO, key, iv);
+  const ct = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  // store ciphertext + auth tag together
+  return {
+    ciphertext: Buffer.concat([ct, tag]).toString('hex'),
+    iv: iv.toString('hex'),
+  };
+}
+
+function _decryptSecret(userId, ciphertextHex, ivHex) {
+  const key  = _deriveUserKey(userId);
+  const iv   = Buffer.from(ivHex, 'hex');
+  const data = Buffer.from(ciphertextHex, 'hex');
+  const tag  = data.slice(-16);
+  const ct   = data.slice(0, -16);
+  const decipher = crypto.createDecipheriv(ALGO, key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
+}
+
+const ALLOWED_SECRET_NAMES = new Set(['nh-key', 'mdx-key']);
+
+// Save a secret (value sent from client, encrypted on server, never stored plain)
+app.post('/api/secrets/:name', requireAuth, (req, res) => {
+  const { name } = req.params;
+  if (!ALLOWED_SECRET_NAMES.has(name)) return res.status(400).json({ error: 'Unknown secret name.' });
+  const { value } = req.body ?? {};
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return res.status(400).json({ error: 'Value is required.' });
+  }
+  try {
+    const { ciphertext, iv } = _encryptSecret(req.session.userId, value.trim());
+    db.prepare(
+      'INSERT OR REPLACE INTO secrets (user_id, key_name, ciphertext, iv) VALUES (?, ?, ?, ?)'
+    ).run(req.session.userId, name, ciphertext, iv);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to save secret.' });
+  }
+});
+
+// Delete a secret
+app.delete('/api/secrets/:name', requireAuth, (req, res) => {
+  const { name } = req.params;
+  if (!ALLOWED_SECRET_NAMES.has(name)) return res.status(400).json({ error: 'Unknown secret name.' });
+  db.prepare('DELETE FROM secrets WHERE user_id = ? AND key_name = ?').run(req.session.userId, name);
+  res.json({ ok: true });
+});
+
+// Check if a secret is saved (never returns the value)
+app.get('/api/secrets/:name/status', requireAuth, (req, res) => {
+  const { name } = req.params;
+  if (!ALLOWED_SECRET_NAMES.has(name)) return res.status(400).json({ error: 'Unknown secret name.' });
+  const row = db.prepare('SELECT 1 FROM secrets WHERE user_id = ? AND key_name = ?').get(req.session.userId, name);
+  res.json({ saved: !!row });
+});
+
+// Helper used by the proxy to inject a stored secret value
+function getSecretValue(userId, name) {
+  const row = db.prepare('SELECT ciphertext, iv FROM secrets WHERE user_id = ? AND key_name = ?').get(userId, name);
+  if (!row) return null;
+  try { return _decryptSecret(userId, row.ciphertext, row.iv); } catch { return null; }
+}
 
 // ─── Serve login page (public) ────────────────────────────────────────────────
 app.get('/login', (req, res) => {
