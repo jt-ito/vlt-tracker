@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist_out/
 build/
+data/
 .env
 .env.*
 *.log

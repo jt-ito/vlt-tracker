@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VLT Tracker — Login</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --surface2: #22222f;
+      --surface3: #2a2a3a;
+      --accent: #7c6af7;
+      --accent2: #a78bfa;
+      --accent-glow: rgba(124, 106, 247, 0.25);
+      --text: #e8e8f0;
+      --text-muted: #8888aa;
+      --border: #333348;
+      --danger: #f87171;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+
+    .logo-icon {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+    }
+
+    .logo-text {
+      font-size: 1.3rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .logo-text span { color: var(--accent2); }
+
+    h1 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+
+    .subtitle {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-bottom: 28px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+
+    .field { margin-bottom: 16px; }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+      font-family: inherit;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus {
+      border-color: var(--accent);
+    }
+
+    .pw-wrap {
+      position: relative;
+    }
+
+    .pw-wrap input {
+      padding-right: 40px;
+    }
+
+    .eye-btn {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 1rem;
+      padding: 2px 4px;
+      line-height: 1;
+    }
+
+    .eye-btn:hover { color: var(--text); }
+
+    .btn-primary {
+      width: 100%;
+      margin-top: 8px;
+      padding: 11px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 0.92rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.18s, box-shadow 0.18s;
+      font-family: inherit;
+    }
+
+    .btn-primary:hover {
+      background: #6b5ae0;
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .error-msg {
+      display: none;
+      background: rgba(248, 113, 113, 0.12);
+      border: 1px solid rgba(248, 113, 113, 0.35);
+      border-radius: var(--radius-sm);
+      color: var(--danger);
+      font-size: 0.82rem;
+      padding: 10px 12px;
+      margin-top: 14px;
+    }
+
+    .error-msg.visible { display: block; }
+
+    .hint {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 18px;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    .setup-banner {
+      background: rgba(124, 106, 247, 0.1);
+      border: 1px solid rgba(124, 106, 247, 0.3);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      font-size: 0.8rem;
+      color: var(--accent2);
+      margin-bottom: 22px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <div class="logo-icon">📚</div>
+      <div class="logo-text">VLT <span>Tracker</span></div>
+    </div>
+
+    <div id="setupBanner" class="setup-banner" style="display:none">
+      No accounts exist yet. Create your admin account to get started.
+    </div>
+
+    <h1 id="formTitle">Sign in</h1>
+    <p class="subtitle" id="formSubtitle">Enter your credentials to access your library.</p>
+
+    <form id="authForm" autocomplete="on">
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username"
+               autocomplete="username" required maxlength="64"
+               placeholder="your username" />
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <div class="pw-wrap">
+          <input type="password" id="password" name="password"
+                 autocomplete="current-password" required maxlength="128"
+                 placeholder="••••••••" />
+          <button type="button" class="eye-btn" id="eyeBtn"
+                  onclick="togglePw()" aria-label="Toggle password visibility">👁</button>
+        </div>
+      </div>
+      <div class="field" id="confirmField" style="display:none">
+        <label for="confirmPassword">Confirm Password</label>
+        <div class="pw-wrap">
+          <input type="password" id="confirmPassword" name="confirm"
+                 autocomplete="new-password" maxlength="128"
+                 placeholder="••••••••" />
+        </div>
+      </div>
+
+      <button type="submit" class="btn-primary" id="submitBtn">Sign in</button>
+      <div class="error-msg" id="errorMsg"></div>
+    </form>
+
+    <p class="hint" id="hintText">Your library data stays on this server.</p>
+  </div>
+
+  <script>
+    let isSetup = false;
+
+    async function init() {
+      try {
+        const r = await fetch('/api/auth/status');
+        const d = await r.json();
+        if (d.authenticated) {
+          window.location.replace('/');
+          return;
+        }
+        isSetup = d.setupRequired;
+        if (isSetup) {
+          document.getElementById('setupBanner').style.display = '';
+          document.getElementById('formTitle').textContent = 'Create account';
+          document.getElementById('formSubtitle').textContent = 'Set up your credentials to secure this instance.';
+          document.getElementById('submitBtn').textContent = 'Create account';
+          document.getElementById('confirmField').style.display = '';
+          document.getElementById('hintText').textContent =
+            'You can add more accounts from the settings once logged in.';
+          document.querySelector('#password').autocomplete = 'new-password';
+        }
+      } catch(e) {
+        // server unreachable — show form anyway
+      }
+    }
+
+    function togglePw() {
+      const inp = document.getElementById('password');
+      const btn = document.getElementById('eyeBtn');
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      btn.textContent = show ? '🙈' : '👁';
+    }
+
+    document.getElementById('authForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById('errorMsg');
+      errEl.classList.remove('visible');
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (isSetup) {
+        const confirm = document.getElementById('confirmPassword').value;
+        if (password !== confirm) {
+          errEl.textContent = 'Passwords do not match.';
+          errEl.classList.add('visible');
+          btn.disabled = false;
+          return;
+        }
+        if (password.length < 8) {
+          errEl.textContent = 'Password must be at least 8 characters.';
+          errEl.classList.add('visible');
+          btn.disabled = false;
+          return;
+        }
+      }
+
+      try {
+        const endpoint = isSetup ? '/api/auth/setup' : '/api/auth/login';
+        const r = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        const d = await r.json();
+        if (r.ok && d.ok) {
+          window.location.replace('/');
+        } else {
+          errEl.textContent = d.error || 'Authentication failed.';
+          errEl.classList.add('visible');
+          btn.disabled = false;
+        }
+      } catch(e) {
+        errEl.textContent = 'Could not reach the server. Try again.';
+        errEl.classList.add('visible');
+        btn.disabled = false;
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>

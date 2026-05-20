@@ -18,6 +18,10 @@ COPY extensions/ ./extensions/
 EXPOSE 3000
 ENV NODE_ENV=production
 
+# Mount a volume here to persist user accounts and sessions across container restarts.
+# Example: docker run -v vlt-data:/app/data ...
+VOLUME ["/app/data"]
+
 # Cloudflare bypass (puppeteer-core) requires a real Chrome install.
 # In container mode it will gracefully fail — the plain CORS proxy still works.
 CMD ["node", "server.js"]

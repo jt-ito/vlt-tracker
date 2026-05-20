@@ -1,13 +1,233 @@
 'use strict';
 
-const express = require('express');
-const path = require('path');
-const fs = require('fs');
+const express  = require('express');
+const path     = require('path');
+const fs       = require('fs');
+const crypto   = require('crypto');
 const { exec } = require('child_process');
 
+const helmet        = require('helmet');
+const session       = require('express-session');
+const bcrypt        = require('bcrypt');
+const Database      = require('better-sqlite3');
+const { RateLimiterMemory } = require('rate-limiter-flexible');
+
+// ─── Data directory (persists user accounts and sessions) ─────────────────────
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+// ─── SQLite — users + sessions ────────────────────────────────────────────────
+const db = new Database(path.join(DATA_DIR, 'users.db'));
+db.pragma('journal_mode = WAL');
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT    UNIQUE NOT NULL COLLATE NOCASE,
+    hash       TEXT    NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    sid    TEXT    PRIMARY KEY,
+    data   TEXT    NOT NULL,
+    expire INTEGER NOT NULL
+  );
+`);
+
+// Purge expired sessions every minute
+setInterval(() => {
+  db.prepare('DELETE FROM sessions WHERE expire < ?').run(Date.now());
+}, 60_000);
+
+// ─── SQLite session store ─────────────────────────────────────────────────────
+class SQLiteStore extends session.Store {
+  get(sid, cb) {
+    try {
+      const row = db.prepare('SELECT data, expire FROM sessions WHERE sid = ?').get(sid);
+      if (!row || row.expire < Date.now()) return cb(null, null);
+      cb(null, JSON.parse(row.data));
+    } catch (e) { cb(e); }
+  }
+  set(sid, sess, cb) {
+    try {
+      const expire = sess.cookie?.expires
+        ? new Date(sess.cookie.expires).getTime()
+        : Date.now() + SESSION_TTL_MS;
+      db.prepare(
+        'INSERT OR REPLACE INTO sessions (sid, data, expire) VALUES (?, ?, ?)'
+      ).run(sid, JSON.stringify(sess), expire);
+      cb(null);
+    } catch (e) { cb(e); }
+  }
+  destroy(sid, cb) {
+    try { db.prepare('DELETE FROM sessions WHERE sid = ?').run(sid); cb(null); }
+    catch (e) { cb(e); }
+  }
+  touch(sid, sess, cb) {
+    try {
+      const expire = sess.cookie?.expires
+        ? new Date(sess.cookie.expires).getTime()
+        : Date.now() + SESSION_TTL_MS;
+      db.prepare('UPDATE sessions SET expire = ? WHERE sid = ?').run(expire, sid);
+      cb(null);
+    } catch (e) { cb(e); }
+  }
+}
+
+// ─── Session secret (generated once, then persisted) ─────────────────────────
+const SECRET_FILE = path.join(DATA_DIR, 'session.secret');
+let SESSION_SECRET;
+if (fs.existsSync(SECRET_FILE)) {
+  SESSION_SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+} else {
+  SESSION_SECRET = crypto.randomBytes(64).toString('hex');
+  fs.writeFileSync(SECRET_FILE, SESSION_SECRET, { mode: 0o600 });
+}
+
+const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const BCRYPT_ROUNDS  = 12;
+const isProd         = process.env.NODE_ENV === 'production';
+
+// ─── Login rate limiter — 10 attempts per 15 min per IP ───────────────────────
+const loginLimiter = new RateLimiterMemory({
+  points: 10,
+  duration: 15 * 60,
+});
+
+// ─── Express app ─────────────────────────────────────────────────────────────
 const app = express();
-app.use(express.json());
-app.use(express.static(path.join(__dirname)));
+
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // app uses inline scripts; tighten if desired
+}));
+
+// Body parsing
+app.use(express.json({ limit: '1mb' }));
+
+// Session middleware
+app.use(session({
+  secret: SESSION_SECRET,
+  name: 'vlt.sid',
+  resave: false,
+  saveUninitialized: false,
+  rolling: true,              // reset 15-min window on every request
+  store: new SQLiteStore(),
+  cookie: {
+    httpOnly: true,           // JS cannot read the cookie
+    sameSite: 'strict',       // blocks CSRF via cross-site requests
+    secure: isProd,           // HTTPS only in production
+    maxAge: SESSION_TTL_MS,
+  },
+}));
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+function requireAuth(req, res, next) {
+  if (req.session?.userId) return next();
+  if (req.accepts('html')) return res.redirect('/login');
+  res.status(401).json({ error: 'Unauthenticated' });
+}
+
+function setupRequired() {
+  return db.prepare('SELECT COUNT(*) AS c FROM users').get().c === 0;
+}
+
+// ─── Auth API ─────────────────────────────────────────────────────────────────
+
+// Status check — used by login.html to detect setup mode and auth state
+app.get('/api/auth/status', (req, res) => {
+  res.json({
+    authenticated: !!req.session?.userId,
+    username: req.session?.username ?? null,
+    setupRequired: setupRequired(),
+  });
+});
+
+// First-run setup — only works while no users exist
+app.post('/api/auth/setup', async (req, res) => {
+  if (!setupRequired()) {
+    return res.status(403).json({ error: 'Setup already complete.' });
+  }
+  const { username, password } = req.body ?? {};
+  if (
+    typeof username !== 'string' || username.trim().length < 1 || username.trim().length > 64 ||
+    typeof password !== 'string' || password.length < 8 || password.length > 128
+  ) {
+    return res.status(400).json({ error: 'Invalid username or password (min 8 chars).' });
+  }
+  const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  try {
+    const row = db.prepare(
+      'INSERT INTO users (username, hash) VALUES (?, ?) RETURNING id, username'
+    ).get(username.trim(), hash);
+    req.session.regenerate((err) => {
+      if (err) return res.status(500).json({ error: 'Session error.' });
+      req.session.userId   = row.id;
+      req.session.username = row.username;
+      res.json({ ok: true });
+    });
+  } catch (e) {
+    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'Username already taken.' });
+    }
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// Login
+app.post('/api/auth/login', async (req, res) => {
+  // Rate limit by IP
+  try {
+    await loginLimiter.consume(req.ip);
+  } catch {
+    return res.status(429).json({ error: 'Too many login attempts. Try again in 15 minutes.' });
+  }
+
+  const { username, password } = req.body ?? {};
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Invalid request.' });
+  }
+
+  const user = db.prepare('SELECT id, username, hash FROM users WHERE username = ?').get(username.trim());
+
+  // Always run bcrypt to prevent timing attacks even on unknown usernames
+  const dummyHash = '$2b$12$invalidhashpaddingtopreventimingtattack000000000000000000';
+  const match = await bcrypt.compare(password, user ? user.hash : dummyHash);
+
+  if (!user || !match) {
+    return res.status(401).json({ error: 'Invalid username or password.' });
+  }
+
+  // Session fixation prevention — regenerate session ID on login
+  req.session.regenerate((err) => {
+    if (err) return res.status(500).json({ error: 'Session error.' });
+    req.session.userId   = user.id;
+    req.session.username = user.username;
+    res.json({ ok: true });
+  });
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    res.clearCookie('vlt.sid');
+    res.json({ ok: true });
+  });
+});
+
+// ─── Serve login page (public) ────────────────────────────────────────────────
+app.get('/login', (req, res) => {
+  if (req.session?.userId) return res.redirect('/');
+  res.sendFile(path.join(__dirname, 'login.html'));
+});
+
+// ─── All subsequent routes require authentication ─────────────────────────────
+app.use(requireAuth);
+
+// Serve the main app
+app.use(express.static(path.join(__dirname), {
+  index: 'index.html',
+}));
 
 // ─── CORS Proxy ───────────────────────────────────────────────────────────────
 // Lets the browser fetch any URL server-side, avoiding CORS restrictions.
