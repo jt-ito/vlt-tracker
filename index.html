@@ -1184,6 +1184,8 @@
 <header>
   <span class="logo">📚 MangaList</span>
   <div class="header-actions">
+    <span id="headerUsername" style="font-size:0.8rem;color:var(--text-muted);padding:0 4px 0 0;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+    <button class="btn btn-ghost" onclick="doLogout()" title="Log out" style="font-size:0.8rem;padding:5px 10px;margin-right:4px">↪ Log out</button>
     <button class="btn btn-icon" onclick="openSettings()" title="Settings" style="font-size:1.1rem">⚙️</button>
     <div class="split-btn-group" id="splitBtnGroup">
       <button class="btn btn-primary split-main" onclick="openModal()">＋ Add Entry</button><button class="split-arrow" onclick="toggleImportMenu(event)" title="More options">▾</button>
@@ -1596,6 +1598,24 @@
         </div>
 
       </div>
+
+      <div class="settings-section admin-only hidden" id="accountsSection">
+        <div class="settings-section-title">Accounts</div>
+
+        <div id="accountsList" style="margin-bottom:16px;display:flex;flex-direction:column;gap:2px"></div>
+
+        <form autocomplete="off" onsubmit="createAccount(event)" style="display:flex;flex-direction:column;gap:8px">
+          <div style="display:flex;gap:6px">
+            <input type="text" id="newAccUser" class="themed-input" placeholder="Username" maxlength="64" required autocomplete="off" style="flex:1;min-width:0" />
+            <input type="password" id="newAccPass" class="themed-input" placeholder="Password (min 8)" maxlength="128" required autocomplete="new-password" style="flex:1;min-width:0" />
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button type="submit" class="btn btn-primary" style="flex-shrink:0">Create Account</button>
+            <span id="accountMsg" style="font-size:0.8rem;color:var(--danger);display:none"></span>
+          </div>
+        </form>
+      </div>
+
     </div>
   </div>
 </div>
@@ -1648,7 +1668,7 @@
 
 <script>
   // ── State ──
-  let entries = JSON.parse(localStorage.getItem('mangaEntries') || '[]');
+  let entries = [];
   let currentFilter = 'all';
   let currentSort = 'title';
   let currentView = 'list';
@@ -1657,13 +1677,22 @@
   let dupeConfirmed = false;
   let cfPanelUrl = '';
 
+  // ── Current user (populated in init()) ──
+  const currentUser = { id: null, username: null, isAdmin: false };
+
+  // Return a localStorage key namespaced to the current user so each account
+  // gets its own isolated data.  Falls back to the bare key before init() runs.
+  function storeKey(name) {
+    return currentUser.id ? `u${currentUser.id}:${name}` : name;
+  }
+
   // ── Settings ──
   const DEFAULT_SETTINGS = { lang: 'en', cacheImages: false, showLinks: true };
-  let settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('mangaSettings') || '{}') };
+  let settings = { ...DEFAULT_SETTINGS };
 
   // ── Image Cache ──
-  let imageCache = JSON.parse(localStorage.getItem('mangaImageCache') || '{}');
-  function saveImageCache() { localStorage.setItem('mangaImageCache', JSON.stringify(imageCache)); }
+  let imageCache = {};
+  function saveImageCache() { localStorage.setItem(storeKey('mangaImageCache'), JSON.stringify(imageCache)); }
   function clearImageCache() {
     if (!confirm('Clear all cached images? Thumbnails will reload from the internet when entries are displayed.')) return;
     imageCache = {};
@@ -1697,7 +1726,7 @@
     settings.lang = document.getElementById('settingLang').value;
     settings.cacheImages = document.getElementById('settingCacheImages').checked;
     settings.showLinks = document.getElementById('settingShowLinks').checked;
-    localStorage.setItem('mangaSettings', JSON.stringify(settings));
+    localStorage.setItem(storeKey('mangaSettings'), JSON.stringify(settings));
     renderEntries();
   }
   function openSettings() {
@@ -1707,10 +1736,79 @@
     updateCacheInfo();
     loadNhKeyField();
     loadMdxKeyField();
+    if (currentUser.isAdmin) loadAccountsList();
     document.getElementById('settingsBackdrop').classList.remove('hidden');
   }
   function closeSettings() {
     document.getElementById('settingsBackdrop').classList.add('hidden');
+  }
+
+  async function doLogout() {
+    try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
+    window.location.replace('/login');
+  }
+
+  // ── Account management (admin only) ──────────────────────────────────────────
+  async function loadAccountsList() {
+    try {
+      const r = await fetch('/api/auth/users');
+      if (!r.ok) return;
+      const { users } = await r.json();
+      const list = document.getElementById('accountsList');
+      if (!list) return;
+      list.innerHTML = users.map(u => `
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)">
+          <span style="font-size:0.88rem;color:var(--text)">
+            ${escHtml(u.username)}
+            ${u.isAdmin ? '<span style="font-size:0.72rem;color:var(--accent2);margin-left:6px">admin</span>' : ''}
+          </span>
+          ${u.id !== currentUser.id
+            ? `<button class="btn btn-ghost" style="font-size:0.78rem;padding:3px 8px;color:var(--danger);flex-shrink:0"
+                 onclick="deleteAccount(${u.id},'${escHtml(u.username).replace(/'/g,"\\'")}')">Delete</button>`
+            : '<span style="font-size:0.78rem;color:var(--text-muted);flex-shrink:0">(you)</span>'}
+        </div>
+      `).join('');
+    } catch {}
+  }
+
+  async function createAccount(e) {
+    e.preventDefault();
+    const username = document.getElementById('newAccUser').value.trim();
+    const password = document.getElementById('newAccPass').value;
+    const msgEl = document.getElementById('accountMsg');
+    msgEl.style.display = 'none';
+    if (!username || password.length < 8) {
+      msgEl.textContent = 'Username required; password must be ≥ 8 characters.';
+      msgEl.style.display = '';
+      return;
+    }
+    try {
+      const r = await fetch('/api/auth/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        document.getElementById('newAccUser').value = '';
+        document.getElementById('newAccPass').value = '';
+        loadAccountsList();
+      } else {
+        msgEl.textContent = d.error || 'Failed to create account.';
+        msgEl.style.display = '';
+      }
+    } catch {
+      msgEl.textContent = 'Server error.';
+      msgEl.style.display = '';
+    }
+  }
+
+  async function deleteAccount(id, username) {
+    if (!confirm(`Delete account "${username}"? Their library data in this browser will remain in localStorage but the account will no longer be able to log in.`)) return;
+    try {
+      const r = await fetch(`/api/auth/users/${id}`, { method: 'DELETE' });
+      if (r.ok) loadAccountsList();
+    } catch {}
   }
 
   // ── Server-side secrets (API keys stored server-side, never in the browser) ──
@@ -1859,7 +1957,7 @@
 
   // ── Persistence ──
   function save() {
-    localStorage.setItem('mangaEntries', JSON.stringify(entries));
+    localStorage.setItem(storeKey('mangaEntries'), JSON.stringify(entries));
   }
 
   // ── Filters / Sort ──
@@ -3511,7 +3609,45 @@
   }
 
   // ── Init ──
-  renderEntries();
+  async function init() {
+    try {
+      const r = await fetch('/api/auth/status');
+      if (!r.ok) throw new Error();
+      const d = await r.json();
+      if (!d.authenticated) { window.location.replace('/login'); return; }
+
+      currentUser.id       = d.userId;
+      currentUser.username = d.username;
+      currentUser.isAdmin  = d.isAdmin;
+
+      // One-time migration: if old un-namespaced keys exist and namespaced ones don't,
+      // move the data over so existing users keep their library after the update.
+      for (const key of ['mangaEntries', 'mangaSettings', 'mangaImageCache']) {
+        const ns = storeKey(key);
+        if (!localStorage.getItem(ns) && localStorage.getItem(key)) {
+          localStorage.setItem(ns, localStorage.getItem(key));
+          localStorage.removeItem(key);
+        }
+      }
+
+      entries  = JSON.parse(localStorage.getItem(storeKey('mangaEntries'))    || '[]');
+      settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(storeKey('mangaSettings')) || '{}') };
+      imageCache = JSON.parse(localStorage.getItem(storeKey('mangaImageCache')) || '{}');
+
+      // Show logged-in username in header
+      const unEl = document.getElementById('headerUsername');
+      if (unEl) unEl.textContent = d.username;
+
+      // Reveal admin-only UI
+      if (d.isAdmin) {
+        document.querySelectorAll('.admin-only').forEach(el => el.classList.remove('hidden'));
+      }
+    } catch {}
+
+    renderEntries();
+    updateCacheInfo();
+  }
+  init();
 </script>
 
 <!-- ── Lookup Log Panel ── -->

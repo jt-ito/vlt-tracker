@@ -25,6 +25,7 @@ db.exec(`
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     username   TEXT    UNIQUE NOT NULL COLLATE NOCASE,
     hash       TEXT    NOT NULL,
+    is_admin   INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
   );
   CREATE TABLE IF NOT EXISTS sessions (
@@ -41,6 +42,11 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 `);
+
+// Migration: add is_admin column to existing DBs that predate this feature
+try { db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0'); } catch {}
+// Ensure the earliest-created user is always admin
+db.prepare('UPDATE users SET is_admin = 1 WHERE id = (SELECT MIN(id) FROM users)').run();
 
 // Purge expired sessions every minute
 setInterval(() => {
@@ -158,9 +164,17 @@ function setupRequired() {
 
 // Status check — used by login.html to detect setup mode and auth state
 app.get('/api/auth/status', (req, res) => {
+  const userId = req.session?.userId ?? null;
+  let isAdmin = false;
+  if (userId) {
+    const row = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId);
+    isAdmin = !!(row?.is_admin);
+  }
   res.json({
-    authenticated: !!req.session?.userId,
+    authenticated: !!userId,
+    userId,
     username: req.session?.username ?? null,
+    isAdmin,
     setupRequired: setupRequired(),
   });
 });
@@ -180,7 +194,7 @@ app.post('/api/auth/setup', async (req, res) => {
   const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   try {
     const row = db.prepare(
-      'INSERT INTO users (username, hash) VALUES (?, ?) RETURNING id, username'
+      'INSERT INTO users (username, hash, is_admin) VALUES (?, ?, 1) RETURNING id, username'
     ).get(username.trim(), hash);
     req.session.regenerate((err) => {
       if (err) return res.status(500).json({ error: 'Session error.' });
@@ -235,6 +249,59 @@ app.post('/api/auth/logout', (req, res) => {
     res.clearCookie('vlt.sid');
     res.json({ ok: true });
   });
+});
+
+// ─── Admin middleware ─────────────────────────────────────────────────────────
+function requireAdmin(req, res, next) {
+  if (!req.session?.userId) return res.status(401).json({ error: 'Unauthenticated' });
+  const row = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(req.session.userId);
+  if (!row?.is_admin) return res.status(403).json({ error: 'Admin access required.' });
+  next();
+}
+
+// ─── User management (admin only) ────────────────────────────────────────────
+
+// List all users
+app.get('/api/auth/users', requireAuth, requireAdmin, (req, res) => {
+  const users = db.prepare(
+    'SELECT id, username, is_admin, created_at FROM users ORDER BY created_at ASC'
+  ).all();
+  res.json({ users: users.map(u => ({ id: u.id, username: u.username, isAdmin: !!u.is_admin, createdAt: u.created_at })) });
+});
+
+// Create a new user account
+app.post('/api/auth/users', requireAuth, requireAdmin, async (req, res) => {
+  const { username, password } = req.body ?? {};
+  if (
+    typeof username !== 'string' || username.trim().length < 1 || username.trim().length > 64 ||
+    typeof password !== 'string' || password.length < 8 || password.length > 128
+  ) {
+    return res.status(400).json({ error: 'Invalid username or password (min 8 chars).' });
+  }
+  const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  try {
+    const row = db.prepare(
+      'INSERT INTO users (username, hash) VALUES (?, ?) RETURNING id, username'
+    ).get(username.trim(), hash);
+    res.json({ ok: true, user: { id: row.id, username: row.username } });
+  } catch (e) {
+    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'Username already taken.' });
+    }
+    res.status(500).json({ error: 'Server error.' });
+  }
+});
+
+// Delete a user account (cannot delete yourself)
+app.delete('/api/auth/users/:id', requireAuth, requireAdmin, (req, res) => {
+  const targetId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user ID.' });
+  if (targetId === req.session.userId) {
+    return res.status(400).json({ error: 'You cannot delete your own account.' });
+  }
+  const result = db.prepare('DELETE FROM users WHERE id = ?').run(targetId);
+  if (result.changes === 0) return res.status(404).json({ error: 'User not found.' });
+  res.json({ ok: true });
 });
 
 // ─── Server-side secrets (API keys stored encrypted in DB) ───────────────────
