@@ -14,7 +14,7 @@ VLT Tracker runs either as a **desktop app** (Electron) or a **self-hosted web s
 
 ### 📥 Import & Metadata
 - **Import from any URL** — paste a manga or doujin page link and the app fetches the title, author, cover image, and tags automatically via a server-side CORS proxy
-- **"Sauce" quick-import** — drop an NH ID or URL directly into the dedicated import dialog for fast lookups
+- **"Sauce" quick-import** — drop an NH Code (Sauce Code) or URL directly into the dedicated import dialog for fast lookups
 - **AniList & MangaUpdates integration** — one-click lookups enrich entries with canonical titles, authors, cover art, and genre tags
 - **Cloudflare bypass** — a built-in Puppeteer window handles CF-protected sites; the app detects when the challenge is solved and grabs the data automatically
 - **Bulk import queue** — feed it a list of URLs, set a cooldown, walk away
