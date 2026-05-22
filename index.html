@@ -345,6 +345,17 @@
       margin-top: 2px;
     }
 
+    .entry-alt-titles {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      font-style: italic;
+      margin-top: 1px;
+      opacity: 0.75;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .entry-meta {
       display: flex;
       align-items: center;
@@ -1309,6 +1320,16 @@
         </div>
       </div>
 
+      <!-- Alternative Titles -->
+      <div class="field" id="altTitlesField">
+        <label style="margin-bottom:6px">Alternative Titles <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">— also searched, useful for finding by JP/EN/native title</span></label>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input type="text" id="fAltTitleInput" placeholder="Type a title and press Enter to add…" style="flex:1" onkeydown="altTitleKeydown(event)" autocomplete="off" />
+          <button type="button" class="btn btn-ghost" onclick="addAltTitle()" style="flex-shrink:0;padding:6px 12px">Add</button>
+        </div>
+        <div id="altTitlesPreview" style="display:flex;flex-wrap:wrap;gap:4px;min-height:20px"></div>
+      </div>
+
       <!-- Link -->
       <div class="field">
         <label>Link (optional)</label>
@@ -1680,6 +1701,9 @@
   // ── Current user (populated in init()) ──
   const currentUser = { id: null, username: null, isAdmin: false };
 
+  // ── Alt titles being edited in the modal ──
+  let altTitlesState = [];
+
   // Return a localStorage key namespaced to the current user so each account
   // gets its own isolated data.  Falls back to the bare key before init() runs.
   function storeKey(name) {
@@ -1746,6 +1770,44 @@
   async function doLogout() {
     try { await fetch('/api/auth/logout', { method: 'POST' }); } catch {}
     window.location.replace('/login');
+  }
+
+  // ── Alt Titles (modal) ───────────────────────────────────────────────────────
+  function renderAltTitlesPreview() {
+    const container = document.getElementById('altTitlesPreview');
+    if (!container) return;
+    if (!altTitlesState.length) {
+      container.innerHTML = '<span style="color:var(--text-muted);font-size:0.78rem">None yet</span>';
+      return;
+    }
+    container.innerHTML = altTitlesState.map((t, i) =>
+      `<span class="tag-pill" style="display:inline-flex;align-items:center;gap:5px;max-width:100%">
+         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t)}</span>
+         <button type="button" onclick="removeAltTitle(${i})"
+           style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1rem;
+                  line-height:1;padding:0;flex-shrink:0" title="Remove">&times;</button>
+       </span>`
+    ).join('');
+  }
+
+  function addAltTitle() {
+    const input = document.getElementById('fAltTitleInput');
+    const val = input.value.trim();
+    if (val && !altTitlesState.includes(val)) {
+      altTitlesState.push(val);
+      renderAltTitlesPreview();
+    }
+    input.value = '';
+    input.focus();
+  }
+
+  function removeAltTitle(i) {
+    altTitlesState.splice(i, 1);
+    renderAltTitlesPreview();
+  }
+
+  function altTitleKeydown(e) {
+    if (e.key === 'Enter') { e.preventDefault(); addAltTitle(); }
   }
 
   // ── Account management (admin only) ──────────────────────────────────────────
@@ -1999,6 +2061,10 @@
     document.getElementById('fTags').value = (entry?.tags || []).join(', ');
     renderTagsPreview();
 
+    // Alt titles
+    altTitlesState = [...(entry?.altTitles || [])];
+    renderAltTitlesPreview();
+
     // Progress type
     const pType = entry?.progressType || 'chapters';
     progressType = pType;
@@ -2033,6 +2099,7 @@
     document.getElementById('saveBtnMain').textContent = 'Save';
     dupeConfirmed = false;
     editingId = null;
+    altTitlesState = [];
   }
 
   function backdropClick(e) {
@@ -2125,6 +2192,7 @@
       volumesRead: progressType === 'volumes' ? (parseInt(document.getElementById('fVolumesRead').value) || null) : null,
       volumesTotal: progressType === 'volumes' ? (parseInt(document.getElementById('fVolumesTotal').value) || null) : null,
       tags: document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean),
+      altTitles: altTitlesState.length ? [...altTitlesState] : [],
       dateAdded: editingId ? (entries.find(e => e.id === editingId)?.dateAdded || Date.now()) : Date.now(),
     };
 
@@ -2280,7 +2348,8 @@
     const excludes = [...tagFilters.entries()].filter(([,v]) => v === 'exclude').map(([k]) => k);
     return entries
       .filter(e => currentFilter === 'all' || e.status === currentFilter)
-      .filter(e => !q || e.title.toLowerCase().includes(q) || (e.author || '').toLowerCase().includes(q))
+      .filter(e => !q || e.title.toLowerCase().includes(q) || (e.author || '').toLowerCase().includes(q)
+        || (e.altTitles || []).some(t => t.toLowerCase().includes(q)))
       .filter(e => includes.length === 0 || includes.every(t => (e.tags || []).includes(t)))
       .filter(e => excludes.length === 0 || !excludes.some(t => (e.tags || []).includes(t)))
       .sort((a, b) => {
@@ -2328,6 +2397,7 @@
         <div class="entry-info">
           <div class="entry-title">${escHtml(e.title)}</div>
           ${e.author ? `<div class="entry-author">by ${escHtml(e.author)}</div>` : ''}
+          ${e.altTitles?.length ? `<div class="entry-alt-titles">aka: ${e.altTitles.slice(0,3).map(escHtml).join(' · ')}${e.altTitles.length > 3 ? ` +${e.altTitles.length - 3} more` : ''}</div>` : ''}
           <div class="entry-meta">
             ${statusPill(e.status)}
             ${progressLabel(e) ? `<span class="progress-text">${progressLabel(e)}</span>` : ''}
@@ -2369,6 +2439,7 @@
         <div class="entry-grid-info">
           <div class="entry-grid-title">${escHtml(e.title)}</div>
           ${e.author ? `<div class="entry-grid-author">${escHtml(e.author)}</div>` : ''}
+          ${e.altTitles?.length ? `<div class="entry-alt-titles">aka: ${e.altTitles.slice(0,2).map(escHtml).join(' · ')}</div>` : ''}
           ${progressLabel(e) ? `<div class="entry-grid-progress">${progressLabel(e)}</div>` : ''}
           ${e.tags?.length ? `<div class="entry-tags" style="margin-top:4px">${e.tags.slice(0,5).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('')}</div>` : ''}
         </div>
@@ -2490,7 +2561,14 @@
     }
     const desc = attrs.description?.en || Object.values(attrs.description || {})[0] || '';
     const tags = (attrs.tags || []).map(t => t.attributes?.name?.en || Object.values(t.attributes?.name || {})[0] || '').filter(Boolean);
-    return { title, author, image, description: desc, tags, url };
+    // Alt titles — deduplicated, main title excluded
+    const altTitles = (attrs.altTitles || [])
+      .flatMap(obj => Object.values(obj))
+      .map(t => t.trim())
+      .filter(t => t && t !== title)
+      .filter((t, i, arr) => arr.indexOf(t) === i)
+      .slice(0, 20);
+    return { title, author, image, description: desc, tags, altTitles, url };
   }
 
   async function tryAniList(url) {
@@ -2519,7 +2597,10 @@
       ...(media.genres || []),
       ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name),
     ];
-    return { title, author, image, description, tags, url };
+    // Alt titles — the titles not chosen as main
+    const allTitles = [media.title.romaji, media.title.english, media.title.native].filter(Boolean);
+    const altTitles = allTitles.filter(t => t !== title).filter((t, i, arr) => arr.indexOf(t) === i);
+    return { title, author, image, description, tags, altTitles, url };
   }
 
   async function searchAniListTags(title) {
@@ -2828,7 +2909,24 @@
       }
     }
 
-    return { title, image, description, author, tags };
+    // Alt titles from JSON-LD alternateName / alternateNames
+    const altTitles = [];
+    for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const objs = [].concat(JSON.parse(script.textContent));
+        for (const obj of objs) {
+          const alt = obj.alternateName || obj.alternateNames;
+          if (!alt) continue;
+          const alts = Array.isArray(alt) ? alt : [alt];
+          for (const a of alts) {
+            const v = cleanStr(a);
+            if (v && v !== title && !altTitles.includes(v)) altTitles.push(v);
+          }
+        }
+      } catch {}
+    }
+
+    return { title, image, description, author, tags, altTitles };
   }
 
   // ── Main scrape entry point ──────────────────────────────────────────────
@@ -3332,13 +3430,15 @@
   }
 
   function showImportPreview(result, url) {
-    const { title = '', image = '', author = '', description = '', tags = [] } = result;
+    const { title = '', image = '', author = '', description = '', tags = [], altTitles = [] } = result;
     const rThumb = document.getElementById('importResultThumb');
     rThumb.innerHTML = image
       ? `<img src="${escHtml(image)}" onerror="this.parentElement.innerHTML='\ud83d\udcd6'" alt="cover" />`
       : '\ud83d\udcd6';
     document.getElementById('importResultTitle').textContent = title || '(No title found)';
-    document.getElementById('importResultAuthor').textContent = author ? 'by ' + author : '(Author not detected)';
+    document.getElementById('importResultAuthor').textContent = author
+      ? `by ${author}${altTitles.length ? ` · ${altTitles.length} alt title${altTitles.length > 1 ? 's' : ''} found` : ''}`
+      : altTitles.length ? `${altTitles.length} alt title${altTitles.length > 1 ? 's' : ''} found` : '(Author not detected)';
     document.getElementById('importResultTags').innerHTML = tags.length
       ? tags.slice(0,15).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('')
       : '';
@@ -3347,7 +3447,7 @@
     const btn = document.getElementById('importFetchBtn');
     btn.disabled = false;
     btn.textContent = 'Use this \u0026 Edit';
-    btn.onclick = () => applyScrapedData({ title, image, author, description, tags, url });
+    btn.onclick = () => applyScrapedData({ title, image, author, description, tags, altTitles, url });
   }
 
   function useManualFill() {
@@ -3358,7 +3458,7 @@
     applyScrapedData({ title, author, image, description: '', url });
   }
 
-  function applyScrapedData({ title, image, author, description, tags, url }) {
+  function applyScrapedData({ title, image, author, description, tags, altTitles, url }) {
     closeImportModal();
     openModal();
     document.getElementById('fTitle').value = title || '';
@@ -3368,6 +3468,9 @@
     document.getElementById('fTags').value = (tags || []).join(', ');
     renderTagsPreview();
     previewThumb();
+    // Populate alt titles
+    altTitlesState = [...(altTitles || [])];
+    renderAltTitlesPreview();
   }
 
   // ── Keyboard ──
