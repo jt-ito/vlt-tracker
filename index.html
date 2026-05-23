@@ -3154,6 +3154,9 @@
           closeCfPanel();
           document.getElementById('importBackdrop').classList.remove('hidden');
           showImportPreview(result, savedUrl);
+        } else if (data.status === 'downloading') {
+          document.getElementById('cfServerStatusText').textContent = '⏬ ' + (data.message || 'Downloading browser…');
+          document.getElementById('cfServerStatusSub').textContent = 'One-time download, will be saved for future use.';
         } else if (data.status === 'error') {
           clearInterval(cfPollInterval);
           cfPollInterval = null;

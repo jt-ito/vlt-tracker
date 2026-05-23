@@ -444,21 +444,14 @@ function findChrome() {
     return process.env.CHROME_PATH;
   }
 
-  // Bundled Chromium — downloaded to .puppeteer-cache/ at build time and included in the exe via asarUnpack.
-  // Structure: .puppeteer-cache/chrome/<platform-version>/<chrome-folder>/chrome[.exe]
+  // Chrome auto-downloaded to the data dir on first CF bypass use.
+  // Structure: data/.chromium/chrome/<platform-version>/<chrome-folder>/chrome[.exe]
   const chromeName = process.platform === 'win32' ? 'chrome.exe' : 'chrome';
-  const cacheBases = [
-    // Packaged Electron: asarUnpack extracts to app.asar.unpacked
-    process.resourcesPath && path.join(process.resourcesPath, 'app.asar.unpacked', '.puppeteer-cache'),
-    // Dev or standalone web-server mode
-    path.join(__dirname, '.puppeteer-cache'),
-  ].filter(Boolean);
-  for (const cacheDir of cacheBases) {
-    const chromeDir = path.join(cacheDir, 'chrome');
-    if (!fs.existsSync(chromeDir)) continue;
+  const chromiumDataDir = path.join(DATA_DIR, '.chromium', 'chrome');
+  if (fs.existsSync(chromiumDataDir)) {
     try {
-      for (const ver of fs.readdirSync(chromeDir)) {
-        const verDir = path.join(chromeDir, ver);
+      for (const ver of fs.readdirSync(chromiumDataDir)) {
+        const verDir = path.join(chromiumDataDir, ver);
         if (!fs.statSync(verDir).isDirectory()) continue;
         for (const sub of fs.readdirSync(verDir)) {
           const candidate = path.join(verDir, sub, chromeName);
@@ -492,6 +485,55 @@ function findChrome() {
   return candidates.find(p => p && fs.existsSync(p)) || null;
 }
 
+// Downloads Chrome to DATA_DIR/.chromium/ via @puppeteer/browsers (ESM).
+// Updates cfSessions[sessionId].message with download progress.
+async function downloadChrome(sessionId) {
+  const { install, resolveBuildId, detectBrowserPlatform } = await import('@puppeteer/browsers');
+  const cacheDir = path.join(DATA_DIR, '.chromium');
+  const platform = detectBrowserPlatform();
+  if (!platform) throw new Error('Unsupported platform for Chrome download');
+
+  const buildId = await resolveBuildId('chrome', platform, 'stable');
+
+  // Remove any partial extraction left from a previous failed download
+  const versionDir = path.join(cacheDir, 'chrome', `${platform}-${buildId}`);
+  if (fs.existsSync(versionDir)) {
+    const exeName = process.platform === 'win32' ? 'chrome.exe' : 'chrome';
+    let hasExe = false;
+    try {
+      for (const sub of fs.readdirSync(versionDir)) {
+        if (fs.existsSync(path.join(versionDir, sub, exeName))) { hasExe = true; break; }
+      }
+    } catch {}
+    if (!hasExe) {
+      fs.rmSync(versionDir, { recursive: true, force: true });
+    } else {
+      // Already downloaded
+      const result = await install({ browser: 'chrome', buildId, cacheDir, platform });
+      return result.executablePath;
+    }
+  }
+
+  const setStatus = (msg) => {
+    if (sessionId && cfSessions.has(sessionId)) {
+      cfSessions.set(sessionId, { status: 'downloading', message: msg });
+    }
+  };
+
+  setStatus('Downloading browser (0%)…');
+  const result = await install({
+    browser: 'chrome',
+    buildId,
+    cacheDir,
+    platform,
+    downloadProgressCallback: (downloaded, total) => {
+      const pct = total ? Math.round(downloaded / total * 100) : 0;
+      setStatus(`Downloading browser (${pct}%)…`);
+    },
+  });
+  return result.executablePath;
+}
+
 app.post('/api/cf-open', async (req, res) => {
   const { url } = req.body;
   if (!url || !/^https?:\/\//.test(url)) {
@@ -503,15 +545,22 @@ app.post('/api/cf-open', async (req, res) => {
   res.json({ sessionId, headless: IS_HEADLESS }); // respond immediately so client starts polling
 
   try {
-    const puppeteer = require('puppeteer');
-    const executablePath = findChrome();
+    const puppeteer = require('puppeteer-core');
+    let executablePath = findChrome();
     if (!executablePath) {
-      cfSessions.set(sessionId, {
-        status: 'error',
-        error: 'Chromium not found. In Docker, ensure the image was built from the latest Dockerfile (chromium is included). On Windows/macOS install Chrome or Edge.',
-      });
-      return;
+      // First use — auto-download Chrome to the data dir (persisted across restarts)
+      cfSessions.set(sessionId, { status: 'downloading', message: 'Downloading browser (first time only)…' });
+      try {
+        executablePath = await downloadChrome(sessionId);
+      } catch (dlErr) {
+        cfSessions.set(sessionId, {
+          status: 'error',
+          error: 'Could not download browser automatically: ' + dlErr.message,
+        });
+        return;
+      }
     }
+    cfSessions.set(sessionId, { status: 'open' });
 
     // Container / headless: run silently, auto-bypasses most JS challenges.
     // Desktop: open a visible window so the user can solve CAPTCHA-style challenges.
