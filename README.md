@@ -6,6 +6,8 @@
 
 Your personal manga and doujin library — because a browser bookmark folder named `manga stuff (2)` just isn't cutting it anymore.
 
+> **Disclaimer:** VLT Tracker is a **tracking tool only** — it does not host, store, distribute, or provide access to any manga or doujin content. All metadata (titles, covers, tags) is fetched from third-party sites for personal organisational use. This project is not affiliated with, endorsed by, or connected to any of the sites it integrates with.
+
 VLT Tracker runs either as a **desktop app** (Electron) or a **self-hosted web server** (Docker / Node). Paste a URL, let it scrape the metadata, slap some tags on it, and track your reading progress. No cloud. No subscription. No one judging your taste.
 
 ---

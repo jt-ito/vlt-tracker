@@ -428,6 +428,40 @@ app.get('/api/proxy', async (req, res) => {
   }
 });
 
+// ─── NHentai Gallery (authenticated via stored session cookie) ──────────────────
+// GET /api/nh/:id — fetch nhentai gallery JSON server-side, injecting the user's
+// saved NH session cookie so the request is authenticated and skips CF challenges.
+app.get('/api/nh/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Invalid ID' });
+  const nhKey = getSecretValue(req.session?.userId, 'nh-key');
+  if (!nhKey) return res.status(401).json({ error: 'No NH API key saved' });
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    const resp = await fetch(`https://nhentai.net/api/gallery/${id}`, {
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': 'https://nhentai.net/',
+        'Cookie': nhKey,
+      },
+    });
+    clearTimeout(timer);
+    const text = await resp.text();
+    if (!resp.ok) return res.status(resp.status).json({ error: 'NH API ' + resp.status });
+    try {
+      res.json(JSON.parse(text));
+    } catch {
+      res.status(502).json({ error: 'Non-JSON response from nhentai (CF block?)' });
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).json({ error: 'Request timed out' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
 // ─── Cloudflare Bypass via Chromium ───────────────────────────────────────────
 // In Electron: opens a visible Chrome window the user interacts with.
 // In Docker / headless: runs Chromium headlessly — auto-passes most JS challenges.

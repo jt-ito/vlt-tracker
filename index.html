@@ -1275,9 +1275,9 @@
       </div>
 
       <div class="view-toggles">
-        <button class="btn-icon active" title="Detail List" onclick="setView('list', this)">☰</button>
+        <button class="btn-icon" title="Detail List" onclick="setView('list', this)">☰</button>
         <button class="btn-icon" title="Compact List" onclick="setView('compact', this)">≡</button>
-        <button class="btn-icon" title="Thumbnails" onclick="setView('grid', this)">⊞</button>
+        <button class="btn-icon active" title="Thumbnails" onclick="setView('grid', this)">⊞</button>
         <button class="btn-icon" title="Links" onclick="setView('links', this)">🔗</button>
       </div>
     </div>
@@ -1580,7 +1580,10 @@
             <div class="settings-label">Cached Images</div>
             <div class="settings-desc" id="cacheInfoText">0 images cached</div>
           </div>
-          <button class="btn btn-ghost" style="font-size:0.78rem;padding:4px 10px" onclick="clearImageCache()">Clear Cache</button>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            <button class="btn btn-ghost" id="backfillCacheBtn" style="font-size:0.78rem;padding:4px 10px" onclick="backfillImageCache()">Cache Missing</button>
+            <button class="btn btn-ghost" style="font-size:0.78rem;padding:4px 10px" onclick="clearImageCache()">Clear Cache</button>
+          </div>
         </div>
 
       </div>
@@ -1591,7 +1594,7 @@
         <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
           <div>
             <div class="settings-label">NH API Key</div>
-            <div class="settings-desc">Used to authenticate with the NH API. Encrypted with AES-256-GCM and stored locally — never saved as plaintext.</div>
+            <div class="settings-desc">Used to authenticate with the NH API — skips Cloudflare checks when set. Encrypted with AES-256-GCM and stored locally, never saved as plaintext.</div>
           </div>
           <form autocomplete="off" onsubmit="saveNhKey();return false" style="display:flex;gap:6px;align-items:center">
             <div style="position:relative;flex:1;min-width:0">
@@ -1681,7 +1684,7 @@
       <div id="cfServerStatus" class="hidden" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:18px;text-align:center;padding:48px 32px">
         <div style="font-size:2.8rem">&#x1F310;</div>
         <div id="cfServerStatusText" style="font-size:1rem;font-weight:600;color:var(--text)"></div>
-        <div id="cfServerStatusSub" style="font-size:0.83rem;color:var(--text-muted);max-width:380px;line-height:1.55"></div>
+        <div id="cfServerStatusSub" style="font-size:0.83rem;color:var(--text-muted);max-width:380px;line-height:1.55;text-align:center"></div>
       </div>
     </div>
   </div>
@@ -1692,7 +1695,7 @@
   let entries = [];
   let currentFilter = 'all';
   let currentSort = 'title';
-  let currentView = 'list';
+  let currentView = 'grid';
   let editingId = null;
   let progressType = 'chapters'; // 'chapters' | 'volumes'
   let dupeConfirmed = false;
@@ -1711,39 +1714,149 @@
   }
 
   // ── Settings ──
-  const DEFAULT_SETTINGS = { lang: 'en', cacheImages: false, showLinks: true };
+  const DEFAULT_SETTINGS = { lang: 'en', cacheImages: true, showLinks: true };
   let settings = { ...DEFAULT_SETTINGS };
 
-  // ── Image Cache ──
-  let imageCache = {};
-  function saveImageCache() { localStorage.setItem(storeKey('mangaImageCache'), JSON.stringify(imageCache)); }
-  function clearImageCache() {
-    if (!confirm('Clear all cached images? Thumbnails will reload from the internet when entries are displayed.')) return;
-    imageCache = {};
-    saveImageCache();
-    updateCacheInfo();
-    renderEntries();
+  // ── Image Cache (IndexedDB) ────────────────────────────────────────
+  // Blobs are stored in IndexedDB (no storage limit); object URLs are kept in
+  // memory (imageCacheMap) for fast synchronous rendering. Keys are namespaced
+  // per-user via storeKey() so multiple accounts on one browser stay separate.
+  let _idb = null;
+  const imageCacheMap = new Map(); // storeKey(entryId) → objectURL
+
+  function _openIDB() {
+    if (_idb) return Promise.resolve(_idb);
+    return new Promise((res, rej) => {
+      const req = indexedDB.open('manga-image-cache', 1);
+      req.onupgradeneeded = e => e.target.result.createObjectStore('thumbs');
+      req.onsuccess = e => { _idb = e.target.result; res(_idb); };
+      req.onerror = e => rej(e.target.error);
+    });
   }
-  function updateCacheInfo() {
-    const count = Object.keys(imageCache).length;
-    const el = document.getElementById('cacheInfoText');
-    if (el) el.textContent = count === 0 ? 'No images cached' : `${count} image${count !== 1 ? 's' : ''} cached`;
+
+  async function loadImageCacheFromDB() {
+    try {
+      const db = await _openIDB();
+      const prefix = storeKey('');
+      await new Promise((res, rej) => {
+        const req = db.transaction('thumbs', 'readonly').objectStore('thumbs').openCursor();
+        req.onsuccess = e => {
+          const cur = e.target.result;
+          if (!cur) return res();
+          const key = String(cur.key);
+          if (key.startsWith(prefix)) imageCacheMap.set(key, URL.createObjectURL(cur.value));
+          cur.continue();
+        };
+        req.onerror = e => rej(e.target.error);
+      });
+      // One-time migration: pull any data URLs out of localStorage into IDB
+      const lsKey = storeKey('mangaImageCache');
+      const lsRaw = localStorage.getItem(lsKey);
+      if (lsRaw) {
+        try {
+          const old = JSON.parse(lsRaw);
+          for (const [id, dataUrl] of Object.entries(old)) {
+            const key = storeKey(id);
+            if (imageCacheMap.has(key)) continue; // IDB already has it
+            const r = await fetch(dataUrl);
+            const blob = await r.blob();
+            await new Promise((res2, rej2) => {
+              const tx = db.transaction('thumbs', 'readwrite');
+              tx.objectStore('thumbs').put(blob, key);
+              tx.oncomplete = () => { imageCacheMap.set(key, URL.createObjectURL(blob)); res2(); };
+              tx.onerror = rej2;
+            });
+          }
+        } catch(_) {}
+        localStorage.removeItem(lsKey);
+      }
+    } catch(_) {}
   }
+
   async function cacheThumb(entryId, thumbUrl) {
     if (!thumbUrl) return;
     try {
-      const res = await fetch(thumbUrl);
+      const res = await fetch(thumbUrl, { signal: AbortSignal.timeout(15000) });
       if (!res.ok) return;
       const blob = await res.blob();
-      const reader = new FileReader();
-      reader.onload = () => {
-        imageCache[entryId] = reader.result;
-        saveImageCache();
-        updateCacheInfo();
-        renderEntries();
-      };
-      reader.readAsDataURL(blob);
-    } catch(e) { /* silently skip if unreachable */ }
+      const key = storeKey(entryId);
+      const db = await _openIDB();
+      await new Promise((res2, rej2) => {
+        const tx = db.transaction('thumbs', 'readwrite');
+        tx.objectStore('thumbs').put(blob, key);
+        tx.oncomplete = res2; tx.onerror = rej2;
+      });
+      const old = imageCacheMap.get(key);
+      if (old) URL.revokeObjectURL(old);
+      imageCacheMap.set(key, URL.createObjectURL(blob));
+      updateCacheInfo();
+      renderEntries();
+    } catch(_) { /* unreachable or rate-limited — silently skip */ }
+  }
+
+  async function removeFromImageCache(entryId) {
+    const key = storeKey(entryId);
+    try {
+      const db = await _openIDB();
+      db.transaction('thumbs', 'readwrite').objectStore('thumbs').delete(key);
+    } catch(_) {}
+    const url = imageCacheMap.get(key);
+    if (url) URL.revokeObjectURL(url);
+    imageCacheMap.delete(key);
+  }
+
+  async function clearImageCache() {
+    if (!confirm('Clear all cached images? Thumbnails will reload from the internet when entries are displayed.')) return;
+    try {
+      const db = await _openIDB();
+      const prefix = storeKey('');
+      await new Promise((res, rej) => {
+        const req = db.transaction('thumbs', 'readwrite').objectStore('thumbs').openCursor();
+        req.onsuccess = e => {
+          const cur = e.target.result;
+          if (!cur) return res();
+          if (String(cur.key).startsWith(prefix)) cur.delete();
+          cur.continue();
+        };
+        req.onerror = e => rej(e.target.error);
+      });
+    } catch(_) {}
+    const prefix = storeKey('');
+    for (const [k, url] of imageCacheMap) {
+      if (k.startsWith(prefix)) { URL.revokeObjectURL(url); imageCacheMap.delete(k); }
+    }
+    updateCacheInfo();
+    renderEntries();
+  }
+
+  function updateCacheInfo() {
+    const prefix = storeKey('');
+    const count = [...imageCacheMap.keys()].filter(k => k.startsWith(prefix)).length;
+    const el = document.getElementById('cacheInfoText');
+    if (el) el.textContent = count === 0 ? 'No images cached' : `${count} image${count !== 1 ? 's' : ''} cached`;
+  }
+
+  let _backfillRunning = false;
+  async function backfillImageCache() {
+    if (_backfillRunning) return;
+    _backfillRunning = true;
+    const btn = document.getElementById('backfillCacheBtn');
+    const uncached = entries.filter(e => e.thumb && !imageCacheMap.has(storeKey(e.id)));
+    if (!uncached.length) {
+      if (btn) { btn.textContent = 'All up to date ✓'; setTimeout(() => { btn.textContent = 'Cache Missing'; _backfillRunning = false; }, 2000); }
+      else _backfillRunning = false;
+      return;
+    }
+    let done = 0;
+    for (const entry of uncached) {
+      if (btn) btn.textContent = `Caching ${done + 1} / ${uncached.length}…`;
+      await cacheThumb(entry.id, entry.thumb);
+      done++;
+      await new Promise(r => setTimeout(r, 350)); // throttle — ~3 req/s
+    }
+    _backfillRunning = false;
+    if (btn) { btn.textContent = `Done — ${done} cached`; setTimeout(() => { btn.textContent = 'Cache Missing'; }, 2500); }
+    updateCacheInfo();
   }
 
   function saveSettings() {
@@ -2209,10 +2322,8 @@
     // Cache cover image if enabled
     if (settings.cacheImages && entry.thumb) {
       cacheThumb(entry.id, entry.thumb);
-    } else if (!settings.cacheImages && imageCache[entry.id]) {
-      // Remove stale cache entry if caching was turned off
-      delete imageCache[entry.id];
-      saveImageCache();
+    } else if (!settings.cacheImages) {
+      removeFromImageCache(entry.id);
     }
   }
 
@@ -2221,10 +2332,7 @@
     if (!confirm('Delete this entry? This cannot be undone.')) return;
     const removedId = editingId;
     entries = entries.filter(e => e.id !== editingId);
-    if (imageCache[removedId]) {
-      delete imageCache[removedId];
-      saveImageCache();
-    }
+    removeFromImageCache(removedId);
     save();
     closeModal();
     renderEntries();
@@ -2252,7 +2360,7 @@
   }
 
   function thumbHtml(entry, size = 'sm') {
-    const cached = imageCache[entry.id];
+    const cached = imageCacheMap.get(storeKey(entry.id));
     if (cached) {
       return `<img src="${cached}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />`;
     }
@@ -2433,7 +2541,7 @@
     container.innerHTML = `<div class="entries-grid">${filtered.map(e => `
       <div class="entry-grid-card" onclick="openModal('${e.id}')">
         <div class="entry-thumb-lg">
-          ${e.thumb ? `<img src="${escHtml(e.thumb)}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />` : '📖'}
+          ${thumbHtml(e, 'lg')}
           <span class="status-pill thumb-status s-${e.status}">${STATUS_LABELS[e.status]}</span>
         </div>
         <div class="entry-grid-info">
@@ -2536,12 +2644,23 @@
     const m = url.match(/mangadex\.org\/(?:title|manga)\/([\w-]{36})/i);
     if (!m) return null;
     const id = m[1];
-    const [mangaRes, coverRes] = await Promise.all([
-      fetch(`https://api.mangadex.org/manga/${id}?includes[]=author&includes[]=artist`),
-      fetch(`https://api.mangadex.org/manga/${id}/aggregate`).catch(() => null),
-    ]);
-    if (!mangaRes.ok) throw new Error('MangaDex API error ' + mangaRes.status);
-    const json = await mangaRes.json();
+    const apiUrl = `https://api.mangadex.org/manga/${id}?includes[]=cover_art&includes[]=author&includes[]=artist`;
+
+    // Try direct fetch first (Electron — no CORS); fall back to local server proxy (web/Docker).
+    let json;
+    try {
+      const res = await fetch(apiUrl, { signal: AbortSignal.timeout(10000) });
+      if (res.ok) json = await res.json();
+    } catch (_) {}
+    if (!json) {
+      try {
+        const res = await fetch('/api/proxy?url=' + encodeURIComponent(apiUrl),
+          { signal: AbortSignal.timeout(12000) });
+        if (res.ok) json = JSON.parse(await res.text());
+      } catch (_) {}
+    }
+    if (!json?.data) throw new Error('MangaDex: no data');
+
     const data = json.data;
     const attrs = data.attributes;
     // Pick title by language preference
@@ -2553,7 +2672,7 @@
       || Object.values(attrs.title)[0] || '';
     const authorRel = data.relationships.find(r => r.type === 'author');
     const author = authorRel?.attributes?.name || '';
-    // Cover
+    // Cover — requires cover_art in includes[] to have attributes.fileName
     const coverRel = data.relationships.find(r => r.type === 'cover_art');
     let image = '';
     if (coverRel?.attributes?.fileName) {
@@ -2569,6 +2688,58 @@
       .filter((t, i, arr) => arr.indexOf(t) === i)
       .slice(0, 20);
     return { title, author, image, description: desc, tags, altTitles, url };
+  }
+
+  async function tryNH(url) {
+    // Match nhentai.net/g/<id>
+    const m = url.match(/nhentai\.net\/g\/(\d+)/i);
+    if (!m) return null;
+    const id = m[1];
+
+    let json;
+    // 1. Server-side endpoint: uses the stored NH session cookie to make an
+    //    authenticated request, bypassing Cloudflare without needing the bypass panel.
+    //    Returns 401 if no key saved, 404 in Electron (no local server) — fall through.
+    try {
+      const res = await fetch(`/api/nh/${id}`, { signal: AbortSignal.timeout(10000) });
+      if (res.ok) json = await res.json();
+    } catch (_) {}
+
+    // 2. Direct fetch (Electron — no CORS, may work if IP not CF-blocked)
+    if (!json) {
+      try {
+        const res = await fetch(`https://nhentai.net/api/gallery/${id}`,
+          { signal: AbortSignal.timeout(7000) });
+        if (res.ok) {
+          const text = await res.text();
+          if (!isCloudflarePage(text)) json = JSON.parse(text);
+        }
+      } catch (_) {}
+    }
+    // 3. Generic server proxy fallback
+    if (!json) {
+      try {
+        const res = await fetch('/api/proxy?url=' + encodeURIComponent(`https://nhentai.net/api/gallery/${id}`),
+          { signal: AbortSignal.timeout(10000) });
+        if (res.ok) {
+          const text = await res.text();
+          if (!isCloudflarePage(text)) json = JSON.parse(text);
+        }
+      } catch (_) {}
+    }
+    if (!json?.id) return null;
+
+    const extMap = { j: 'jpg', p: 'png', g: 'gif' };
+    const coverExt = extMap[json.images?.cover?.t] || 'jpg';
+    const image = json.media_id
+      ? `https://t.nhentai.net/galleries/${json.media_id}/cover.${coverExt}`
+      : '';
+    const title = json.title?.pretty || json.title?.english || json.title?.japanese || '';
+    const author = (json.tags || []).filter(t => t.type === 'artist').map(t => t.name).join(', ');
+    const tags = (json.tags || []).filter(t => t.type === 'tag').map(t => t.name);
+    const allTitles = [json.title?.english, json.title?.japanese, json.title?.pretty].filter(Boolean);
+    const altTitles = allTitles.filter(t => t !== title).filter((t, i, arr) => arr.indexOf(t) === i);
+    return { title, author, image, description: '', tags, altTitles, url };
   }
 
   async function tryAniList(url) {
@@ -2661,6 +2832,22 @@
     } catch(e) { return []; }
   }
 
+  // ── Fetch-mode cache ─────────────────────────────────────────────────────
+  // Remembers which approach (direct / proxy-N / cf) worked per hostname so
+  // repeat visits to the same site skip the waterfall entirely. 30-min TTL.
+  const _fetchModeCache = new Map();
+  const _FETCH_CACHE_TTL = 30 * 60 * 1000;
+  function _cacheFetchMode(url, mode) {
+    try { _fetchModeCache.set(new URL(url).hostname, { mode, ts: Date.now() }); } catch (_) {}
+  }
+  function _getCachedFetchMode(url) {
+    try {
+      const e = _fetchModeCache.get(new URL(url).hostname);
+      if (!e || Date.now() - e.ts > _FETCH_CACHE_TTL) return null;
+      return e.mode;
+    } catch (_) { return null; }
+  }
+
   // ── CORS proxy waterfall ──────────────────────────────────────────────────
   // Tries multiple proxies in order; first success wins.
   const PROXIES = [
@@ -2698,9 +2885,17 @@
   ];
 
   async function fetchViaProxy(rawUrl, statusText) {
+    // Start from the cached winning proxy (if any) to avoid re-running the full waterfall.
+    const cachedMode = _getCachedFetchMode(rawUrl);
+    let order = Array.from({ length: PROXIES.length }, (_, i) => i);
+    if (cachedMode && cachedMode.startsWith('proxy-')) {
+      const idx = parseInt(cachedMode.slice(6), 10);
+      if (idx > 0 && idx < PROXIES.length)
+        order = [idx, ...order.filter(i => i !== idx)];
+    }
     let cfHits = 0;
     let lastErr = '';
-    for (let i = 0; i < PROXIES.length; i++) {
+    for (const i of order) {
       try {
         statusText.textContent = `Trying proxy ${i + 1}/${PROXIES.length}…`;
         const html = await Promise.race([
@@ -2708,6 +2903,7 @@
           new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
         ]);
         if (isCloudflarePage(html)) { cfHits++; lastErr = 'Cloudflare challenge'; continue; }
+        _cacheFetchMode(rawUrl, 'proxy-' + i);
         return html;
       } catch (e) {
         lastErr = e.message;
@@ -2955,10 +3151,22 @@
       // 1. Try known-site APIs first (no CF involved)
       statusText.textContent = 'Checking for official API…';
       result = await tryMangaDex(rawUrl).catch(() => null);
+      if (!result) result = await tryNH(rawUrl).catch(() => null);
       if (!result) result = await tryAniList(rawUrl).catch(() => null);
 
+      // Use session cache to skip approaches that are known to fail for this host.
+      const _cachedMode = _getCachedFetchMode(rawUrl);
+      if (_cachedMode === 'cf') {
+        // CF bypass was needed last time — jump straight to it
+        const e = new Error('CF bypass required (cached)');
+        e.cfDetected = true;
+        throw e;
+      }
+      // If a specific proxy already worked, skip the direct-fetch attempt
+      const _skipDirect = _cachedMode && _cachedMode.startsWith('proxy-');
+
       // 2. Direct fetch first (uses the user's own IP — fastest, no CORS on Electron)
-      if (!result) {
+      if (!result && !_skipDirect) {
         try {
           statusText.textContent = 'Trying direct fetch…';
           const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
@@ -2970,6 +3178,7 @@
           }
           statusText.textContent = 'Parsing page…';
           result = { ...parseHtmlMeta(html), url: rawUrl };
+          _cacheFetchMode(rawUrl, 'direct');
         } catch (directErr) {
           if (directErr.cfDetected) throw directErr; // escalate immediately
           // Network error / CORS on non-Electron — fall through to proxies
@@ -3135,6 +3344,7 @@
         clearInterval(cfPollInterval);
         cfPollInterval = null;
         const result = { ...parseHtmlMeta(html), url: savedUrl };
+        _cacheFetchMode(savedUrl, 'cf');
         closeCfPanel();
         document.getElementById('importBackdrop').classList.remove('hidden');
         showImportPreview(result, savedUrl);
@@ -3151,6 +3361,7 @@
           clearInterval(cfPollInterval);
           cfPollInterval = null;
           const result = { ...parseHtmlMeta(data.html), url: savedUrl };
+          _cacheFetchMode(savedUrl, 'cf');
           closeCfPanel();
           document.getElementById('importBackdrop').classList.remove('hidden');
           showImportPreview(result, savedUrl);
@@ -3561,6 +3772,7 @@
     const dummy = { textContent: '' }; // satisfy fetchViaProxy progress arg
     let result = null;
     result = await tryMangaDex(rawUrl).catch(() => null);
+    if (!result) result = await tryNH(rawUrl).catch(() => null);
     if (!result) result = await tryAniList(rawUrl).catch(() => null);
     if (!result) {
       try {
@@ -3738,7 +3950,7 @@
 
       // One-time migration: if old un-namespaced keys exist and namespaced ones don't,
       // move the data over so existing users keep their library after the update.
-      for (const key of ['mangaEntries', 'mangaSettings', 'mangaImageCache']) {
+      for (const key of ['mangaEntries', 'mangaSettings']) {
         const ns = storeKey(key);
         if (!localStorage.getItem(ns) && localStorage.getItem(key)) {
           localStorage.setItem(ns, localStorage.getItem(key));
@@ -3748,7 +3960,7 @@
 
       entries  = JSON.parse(localStorage.getItem(storeKey('mangaEntries'))    || '[]');
       settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(storeKey('mangaSettings')) || '{}') };
-      imageCache = JSON.parse(localStorage.getItem(storeKey('mangaImageCache')) || '{}');
+      await loadImageCacheFromDB();
 
       // Show logged-in username in header
       const unEl = document.getElementById('headerUsername');
