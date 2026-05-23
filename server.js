@@ -428,9 +428,37 @@ app.get('/api/proxy', async (req, res) => {
   }
 });
 
-// ─── NHentai Gallery (authenticated via stored session cookie) ──────────────────
-// GET /api/nh/:id — fetch nhentai gallery JSON server-side, injecting the user's
-// saved NH session cookie so the request is authenticated and skips CF challenges.
+// Image proxy — returns binary with correct Content-Type (used for cover caching)
+app.get('/api/proxy-img', async (req, res) => {
+  const url = req.query.url;
+  if (!url || !/^https?:\/\//.test(url)) return res.status(400).send('Invalid URL');
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const resp = await fetch(url, {
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        'Referer': new URL(url).origin + '/',
+      },
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return res.status(resp.status).send('Upstream error');
+    const ct = resp.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    const buf = await resp.arrayBuffer();
+    res.send(Buffer.from(buf));
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).send('Request timed out');
+    res.status(502).send(e.message);
+  }
+});
+
+// ─── NHentai Gallery (official v2 API with API key) ──────────────────────────────
+// GET /api/nh/:id — call nhentai v2 API server-side using the user's stored API key.
+// Returns normalised metadata so the client doesn't need to know the v2 schema.
 app.get('/api/nh/:id', async (req, res) => {
   const { id } = req.params;
   if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Invalid ID' });
@@ -438,24 +466,37 @@ app.get('/api/nh/:id', async (req, res) => {
   if (!nhKey) return res.status(401).json({ error: 'No NH API key saved' });
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12000);
-    const resp = await fetch(`https://nhentai.net/api/gallery/${id}`, {
-      signal: ctrl.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Referer': 'https://nhentai.net/',
-        'Cookie': nhKey,
-      },
-    });
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const headers = {
+      'Authorization': `Key ${nhKey}`,
+      'User-Agent': 'VLT-Tracker/1.0.4 (https://github.com/jt-ito/vlt-tracker)',
+      'Accept': 'application/json',
+    };
+    // Fetch gallery detail and CDN config in parallel
+    const [galleryResp, cdnResp] = await Promise.all([
+      fetch(`https://nhentai.net/api/v2/galleries/${id}`, { signal: ctrl.signal, headers }),
+      fetch('https://nhentai.net/api/v2/cdn', { signal: ctrl.signal, headers }),
+    ]);
     clearTimeout(timer);
-    const text = await resp.text();
-    if (!resp.ok) return res.status(resp.status).json({ error: 'NH API ' + resp.status });
-    try {
-      res.json(JSON.parse(text));
-    } catch {
-      res.status(502).json({ error: 'Non-JSON response from nhentai (CF block?)' });
+    if (!galleryResp.ok) {
+      const body = await galleryResp.text().catch(() => '');
+      return res.status(galleryResp.status).json({ error: `NH API ${galleryResp.status}`, detail: body });
     }
+    const gallery = await galleryResp.json();
+    let coverBase = '';
+    if (cdnResp.ok) {
+      const cdn = await cdnResp.json().catch(() => ({}));
+      coverBase = cdn.image_servers?.[0] || cdn.thumb_servers?.[0] || '';
+    }
+    // Normalise to the shape tryNH() already expects
+    const t = gallery.title || {};
+    const prettyTitle = t.pretty || t.english || t.japanese || '';
+    const author = (gallery.tags || []).filter(tg => tg.type === 'artist').map(tg => tg.name).join(', ');
+    const tags = (gallery.tags || []).filter(tg => tg.type === 'tag').map(tg => tg.name);
+    const image = (coverBase && gallery.cover?.path) ? `${coverBase}${gallery.cover.path}` : '';
+    const allTitles = [t.english, t.japanese, t.pretty].filter(Boolean);
+    const altTitles = [...new Set(allTitles.filter(x => x !== prettyTitle))];
+    res.json({ title: prettyTitle, author, image, tags, altTitles, _v2: true });
   } catch (e) {
     if (e.name === 'AbortError') return res.status(504).json({ error: 'Request timed out' });
     res.status(502).json({ error: e.message });

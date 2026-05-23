@@ -845,7 +845,7 @@
 
     /* ── Status colors ── */
     .s-reading    { background: rgba(34,197,94,0.15); color: var(--reading); }
-    .s-planning   { background: rgba(59,130,246,0.15); color: var(--planning); }
+    .s-planning   { background: rgba(59,130,246,0.15); color: var(--planning); text-shadow: 0 0 2px #fff, 0 0 2px #fff; }
     .s-dropped    { background: rgba(239,68,68,0.15);  color: var(--dropped); }
     .s-completed  { background: rgba(167,139,250,0.15);color: var(--completed); }
     .s-paused     { background: rgba(245,158,11,0.15); color: var(--paused); }
@@ -1681,7 +1681,7 @@
     <div class="cf-panel-body">
       <webview id="cfWebview" partition="persist:manga"></webview>
       <!-- Web-server mode: no webview, shows status while puppeteer window is open -->
-      <div id="cfServerStatus" class="hidden" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:18px;text-align:center;padding:48px 32px">
+      <div id="cfServerStatus" class="hidden" style="display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:48px 32px">
         <div style="font-size:2.8rem">&#x1F310;</div>
         <div id="cfServerStatusText" style="font-size:1rem;font-weight:600;color:var(--text)"></div>
         <div id="cfServerStatusSub" style="font-size:0.83rem;color:var(--text-muted);max-width:380px;line-height:1.55;text-align:center"></div>
@@ -1774,24 +1774,37 @@
   }
 
   async function cacheThumb(entryId, thumbUrl) {
-    if (!thumbUrl) return;
+    if (!thumbUrl) return false;
     try {
-      const res = await fetch(thumbUrl, { signal: AbortSignal.timeout(15000) });
-      if (!res.ok) return;
-      const blob = await res.blob();
+      let blob;
+      // Try direct fetch first (works in Electron; may be CORS-blocked in web mode)
+      try {
+        const r = await fetch(thumbUrl, { signal: AbortSignal.timeout(10000) });
+        if (r.ok) blob = await r.blob();
+      } catch (_) {}
+      // Fall back to server-side image proxy (handles CORS for web/Docker mode)
+      if (!blob) {
+        try {
+          const r = await fetch('/api/proxy-img?url=' + encodeURIComponent(thumbUrl),
+            { signal: AbortSignal.timeout(15000) });
+          if (r.ok) blob = await r.blob();
+        } catch (_) {}
+      }
+      if (!blob) return false;
       const key = storeKey(entryId);
       const db = await _openIDB();
       await new Promise((res2, rej2) => {
         const tx = db.transaction('thumbs', 'readwrite');
         tx.objectStore('thumbs').put(blob, key);
-        tx.oncomplete = res2; tx.onerror = rej2;
+        tx.oncomplete = res2; tx.onerror = e => rej2(e.target.error);
       });
       const old = imageCacheMap.get(key);
       if (old) URL.revokeObjectURL(old);
       imageCacheMap.set(key, URL.createObjectURL(blob));
       updateCacheInfo();
       renderEntries();
-    } catch(_) { /* unreachable or rate-limited — silently skip */ }
+      return true;
+    } catch(_) { return false; }
   }
 
   async function removeFromImageCache(entryId) {
@@ -1850,8 +1863,8 @@
     let done = 0;
     for (const entry of uncached) {
       if (btn) btn.textContent = `Caching ${done + 1} / ${uncached.length}…`;
-      await cacheThumb(entry.id, entry.thumb);
-      done++;
+      const ok = await cacheThumb(entry.id, entry.thumb);
+      if (ok) done++;
       await new Promise(r => setTimeout(r, 350)); // throttle — ~3 req/s
     }
     _backfillRunning = false;
@@ -2152,6 +2165,7 @@
 
   function setView(view, btn) {
     currentView = view;
+    localStorage.setItem(storeKey('mangaView'), view);
     document.querySelectorAll('.view-toggles .btn-icon').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     renderEntries();
@@ -2696,26 +2710,33 @@
     if (!m) return null;
     const id = m[1];
 
-    let json;
-    // 1. Server-side endpoint: uses the stored NH session cookie to make an
-    //    authenticated request, bypassing Cloudflare without needing the bypass panel.
-    //    Returns 401 if no key saved, 404 in Electron (no local server) — fall through.
+    // 1. Server-side endpoint: calls nhentai v2 API with the user's stored API key.
+    //    Returns pre-normalised data directly.
+    //    Returns 401 if no key saved, or network error in Electron — fall through.
     try {
-      const res = await fetch(`/api/nh/${id}`, { signal: AbortSignal.timeout(10000) });
-      if (res.ok) json = await res.json();
+      const res = await fetch(`/api/nh/${id}`, { signal: AbortSignal.timeout(12000) });
+      if (res.ok) {
+        const data = await res.json();
+        if (data._v2 && data.title) {
+          return {
+            title: data.title, author: data.author || '', image: data.image || '',
+            description: '', tags: data.tags || [], altTitles: data.altTitles || [], url,
+          };
+        }
+      }
     } catch (_) {}
 
-    // 2. Direct fetch (Electron — no CORS, may work if IP not CF-blocked)
-    if (!json) {
-      try {
-        const res = await fetch(`https://nhentai.net/api/gallery/${id}`,
-          { signal: AbortSignal.timeout(7000) });
-        if (res.ok) {
-          const text = await res.text();
-          if (!isCloudflarePage(text)) json = JSON.parse(text);
-        }
-      } catch (_) {}
-    }
+    // 2. Direct fetch (Electron — no CORS; may work if IP not CF-blocked)
+    let json;
+    try {
+      const res = await fetch(`https://nhentai.net/api/gallery/${id}`,
+        { signal: AbortSignal.timeout(7000) });
+      if (res.ok) {
+        const text = await res.text();
+        if (!isCloudflarePage(text)) json = JSON.parse(text);
+      }
+    } catch (_) {}
+
     // 3. Generic server proxy fallback
     if (!json) {
       try {
@@ -2729,6 +2750,7 @@
     }
     if (!json?.id) return null;
 
+    // Parse old v1 response format
     const extMap = { j: 'jpg', p: 'png', g: 'gif' };
     const coverExt = extMap[json.images?.cover?.t] || 'jpg';
     const image = json.media_id
@@ -3960,6 +3982,16 @@
 
       entries  = JSON.parse(localStorage.getItem(storeKey('mangaEntries'))    || '[]');
       settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(storeKey('mangaSettings')) || '{}') };
+
+      // Restore saved view preference (defaults to 'grid' if never changed)
+      const savedView = localStorage.getItem(storeKey('mangaView'));
+      if (savedView && ['list', 'compact', 'grid', 'links'].includes(savedView)) {
+        currentView = savedView;
+        document.querySelectorAll('.view-toggles .btn-icon').forEach(b => {
+          b.classList.toggle('active', !!b.getAttribute('onclick')?.includes(`'${savedView}'`));
+        });
+      }
+
       await loadImageCacheFromDB();
 
       // Show logged-in username in header
