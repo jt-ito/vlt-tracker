@@ -1,23 +1,38 @@
 # ── Stage 1: install production deps ─────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:20-slim AS deps
 WORKDIR /app
 # python3 + make + g++ are required to compile better-sqlite3 (native addon)
-RUN apk add --no-cache python3 make g++
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 RUN npm ci --omit=dev
 
 # ── Stage 2: runtime image ────────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:20-slim
 WORKDIR /app
 
-# Chromium dependencies needed when the app auto-downloads Chrome to /app/data/.chromium/
-# on first use of the Cloudflare bypass feature.
-RUN apk add --no-cache \
-    nss \
-    freetype \
-    harfbuzz \
+# Runtime libs for Chrome auto-downloaded to /app/data/.chromium/ on first CF bypass use.
+# node:20-slim is Debian-based (glibc), so the Google Chrome binary works correctly.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libpango-1.0-0 \
+    libcairo2 \
     ca-certificates \
-    ttf-freefont
+    fonts-freefont-ttf \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy production node_modules from deps stage
 COPY --from=deps /app/node_modules ./node_modules
