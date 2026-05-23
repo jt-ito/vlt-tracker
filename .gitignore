@@ -3,6 +3,7 @@ dist/
 dist_out/
 build/
 data/
+.puppeteer-cache/
 .env
 .env.*
 *.log

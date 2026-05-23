@@ -3070,11 +3070,9 @@
       // ── Web mode: puppeteer window opened by local server ──
       document.getElementById('cfWebview').style.display = 'none';
       document.getElementById('cfServerStatus').classList.remove('hidden');
-      document.getElementById('cfPanelSubtitle').textContent = 'Solve the challenge in the Chrome window — detecting automatically…';
-      document.getElementById('cfServerStatusText').textContent = 'Opening Chrome window…';
-      document.getElementById('cfServerStatusSub').textContent =
-        'A Chrome window will open — solve the Cloudflare challenge there. ' +
-        'We\'ll detect when it\'s done and close the window automatically.';
+      document.getElementById('cfServerStatusText').textContent = 'Connecting…';
+      document.getElementById('cfServerStatusSub').textContent = '';
+      document.getElementById('cfPanelSubtitle').textContent = 'Working…';
 
       fetch('/api/cf-open', {
         method: 'POST',
@@ -3082,10 +3080,22 @@
         body: JSON.stringify({ url }),
       })
         .then(r => r.json())
-        .then(({ sessionId, error }) => {
+        .then(({ sessionId, headless, error }) => {
           if (error) throw new Error(error);
           cfServerSessionId = sessionId;
-          document.getElementById('cfServerStatusText').textContent = 'Chrome window is open — solve the challenge';
+          if (headless) {
+            document.getElementById('cfPanelSubtitle').textContent = 'Attempting automatic bypass…';
+            document.getElementById('cfServerStatusText').textContent = '⏳ Attempting automatic Cloudflare bypass…';
+            document.getElementById('cfServerStatusSub').textContent =
+              'Headless Chromium is running on the server and trying to pass the JS challenge automatically. ' +
+              'This works for most sites — CAPTCHA-based challenges cannot be bypassed this way.';
+          } else {
+            document.getElementById('cfPanelSubtitle').textContent = 'Solve the challenge in the Chrome window — detecting automatically…';
+            document.getElementById('cfServerStatusText').textContent = 'Chrome window is open — solve the challenge';
+            document.getElementById('cfServerStatusSub').textContent =
+              'A Chrome window has opened on the server — solve the Cloudflare challenge there. ' +
+              'We\'ll detect when it\'s done and close the window automatically.';
+          }
           cfPollInterval = setInterval(() => tryCfExtract(), 2000);
         })
         .catch(err => {

@@ -1,6 +1,6 @@
 {
   "name": "vlt-tracker",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "VLT Tracker — a local manga/doujin library tracker with import, tagging, and API integrations",
   "main": "main.js",
   "author": "jt-ito",
@@ -8,8 +8,12 @@
   "scripts": {
     "start": "electron .",
     "web": "node server.js",
-    "dist": "electron-builder --win",
-    "dist:all": "electron-builder --win --linux --mac"
+    "setup-chromium": "node scripts/setup-chromium.js",
+    "dist": "npm run setup-chromium && electron-builder --win",
+    "dist:all": "npm run setup-chromium && electron-builder --win --linux --mac"
+  },
+  "puppeteer": {
+    "skipChromeHeadlessShellDownload": true
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -17,7 +21,7 @@
     "express": "^4.19.2",
     "express-session": "^1.19.0",
     "helmet": "^8.1.0",
-    "puppeteer-core": "^22.0.0",
+    "puppeteer": "^22.0.0",
     "rate-limiter-flexible": "^11.1.0"
   },
   "devDependencies": {
@@ -31,6 +35,9 @@
     "directories": {
       "output": "dist"
     },
+    "asarUnpack": [
+      ".puppeteer-cache/**/*"
+    ],
     "files": [
       "index.html",
       "main.js",
@@ -38,10 +45,12 @@
       "package.json",
       "package-lock.json",
       "extensions/**/*",
+      ".puppeteer-cache/**/*",
       "node_modules/**/*",
       "!node_modules/electron-builder/**",
       "!node_modules/electron/dist/**",
-      "!dist/**"
+      "!dist/**",
+      "!scripts/**"
     ],
     "win": {
       "target": [

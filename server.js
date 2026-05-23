@@ -428,10 +428,46 @@ app.get('/api/proxy', async (req, res) => {
   }
 });
 
-// ─── Cloudflare Bypass via visible Chrome window ───────────────────────────────
+// ─── Cloudflare Bypass via Chromium ───────────────────────────────────────────
+// In Electron: opens a visible Chrome window the user interacts with.
+// In Docker / headless: runs Chromium headlessly — auto-passes most JS challenges.
 const cfSessions = new Map();
 
+// True when running inside a container or any environment without a display.
+const IS_HEADLESS = fs.existsSync('/.dockerenv') ||
+                    process.env.DOCKER === '1' ||
+                    (!process.env.DISPLAY && process.platform === 'linux');
+
 function findChrome() {
+  // Allow an explicit override (e.g. CHROME_PATH=/usr/bin/chromium)
+  if (process.env.CHROME_PATH && fs.existsSync(process.env.CHROME_PATH)) {
+    return process.env.CHROME_PATH;
+  }
+
+  // Bundled Chromium — downloaded to .puppeteer-cache/ at build time and included in the exe via asarUnpack.
+  // Structure: .puppeteer-cache/chrome/<platform-version>/<chrome-folder>/chrome[.exe]
+  const chromeName = process.platform === 'win32' ? 'chrome.exe' : 'chrome';
+  const cacheBases = [
+    // Packaged Electron: asarUnpack extracts to app.asar.unpacked
+    process.resourcesPath && path.join(process.resourcesPath, 'app.asar.unpacked', '.puppeteer-cache'),
+    // Dev or standalone web-server mode
+    path.join(__dirname, '.puppeteer-cache'),
+  ].filter(Boolean);
+  for (const cacheDir of cacheBases) {
+    const chromeDir = path.join(cacheDir, 'chrome');
+    if (!fs.existsSync(chromeDir)) continue;
+    try {
+      for (const ver of fs.readdirSync(chromeDir)) {
+        const verDir = path.join(chromeDir, ver);
+        if (!fs.statSync(verDir).isDirectory()) continue;
+        for (const sub of fs.readdirSync(verDir)) {
+          const candidate = path.join(verDir, sub, chromeName);
+          if (fs.existsSync(candidate)) return candidate;
+        }
+      }
+    } catch {}
+  }
+
   const local = process.env.LOCALAPPDATA || '';
   const prog86 = 'C:\\Program Files (x86)';
   const prog   = 'C:\\Program Files';
@@ -448,10 +484,10 @@ function findChrome() {
     // macOS
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-    // Linux
-    '/usr/bin/google-chrome',
+    // Linux / Alpine Docker
     '/usr/bin/chromium-browser',
     '/usr/bin/chromium',
+    '/usr/bin/google-chrome',
   ];
   return candidates.find(p => p && fs.existsSync(p)) || null;
 }
@@ -464,35 +500,58 @@ app.post('/api/cf-open', async (req, res) => {
 
   const sessionId = Date.now().toString();
   cfSessions.set(sessionId, { status: 'open' });
-  res.json({ sessionId }); // respond immediately so client starts polling
+  res.json({ sessionId, headless: IS_HEADLESS }); // respond immediately so client starts polling
 
   try {
-    const puppeteer = require('puppeteer-core');
+    const puppeteer = require('puppeteer');
     const executablePath = findChrome();
     if (!executablePath) {
       cfSessions.set(sessionId, {
         status: 'error',
-        error: 'Google Chrome or Microsoft Edge not found. Please install Chrome.',
+        error: 'Chromium not found. In Docker, ensure the image was built from the latest Dockerfile (chromium is included). On Windows/macOS install Chrome or Edge.',
       });
       return;
     }
 
+    // Container / headless: run silently, auto-bypasses most JS challenges.
+    // Desktop: open a visible window so the user can solve CAPTCHA-style challenges.
+    const launchArgs = IS_HEADLESS
+      ? [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-blink-features=AutomationControlled',
+          '--window-size=1280,800',
+        ]
+      : ['--window-size=1100,800', '--window-position=80,80'];
+
     const browser = await puppeteer.launch({
       executablePath,
-      headless: false,
-      defaultViewport: null,
-      args: ['--window-size=1100,800', '--window-position=80,80'],
+      headless: IS_HEADLESS ? 'new' : false,
+      defaultViewport: IS_HEADLESS ? { width: 1280, height: 800 } : null,
+      args: launchArgs,
     });
 
     const [page] = await browser.pages();
+
+    // Mask automation signals to improve CF bypass success rate
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    });
+
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
+    // In headless mode, give CF's JS challenge a moment to run and auto-resolve
+    const maxTries = IS_HEADLESS ? 30 : 150; // 1 min headless, 5 min interactive
     let tries = 0;
     const poll = setInterval(async () => {
       tries++;
-      if (tries > 150) { // ~5 minutes max
+      if (tries > maxTries) {
         clearInterval(poll);
-        cfSessions.set(sessionId, { status: 'error', error: 'Timed out waiting for Cloudflare bypass' });
+        cfSessions.set(sessionId, { status: 'error', error: IS_HEADLESS
+          ? 'Cloudflare challenge could not be bypassed automatically. This site may require a CAPTCHA — try importing via the regular URL import instead.'
+          : 'Timed out waiting for Cloudflare bypass' });
         await browser.close().catch(() => {});
         return;
       }
