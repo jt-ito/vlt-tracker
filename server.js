@@ -486,14 +486,14 @@ app.get('/api/nh/:id', async (req, res) => {
     let coverBase = '';
     if (cdnResp.ok) {
       const cdn = await cdnResp.json().catch(() => ({}));
-      coverBase = cdn.image_servers?.[0] || cdn.thumb_servers?.[0] || '';
+      coverBase = (cdn.thumb_servers?.[0] || cdn.image_servers?.[0] || '').replace(/\/$/, '');
     }
     // Normalise to the shape tryNH() already expects
     const t = gallery.title || {};
     const prettyTitle = t.pretty || t.english || t.japanese || '';
     const author = (gallery.tags || []).filter(tg => tg.type === 'artist').map(tg => tg.name).join(', ');
     const tags = (gallery.tags || []).filter(tg => tg.type === 'tag').map(tg => tg.name);
-    const image = (coverBase && gallery.cover?.path) ? `${coverBase}${gallery.cover.path}` : '';
+    const image = (coverBase && gallery.cover?.path) ? `${coverBase}/${gallery.cover.path.replace(/^\//, '')}` : '';
     const allTitles = [t.english, t.japanese, t.pretty].filter(Boolean);
     const altTitles = [...new Set(allTitles.filter(x => x !== prettyTitle))];
     res.json({ title: prettyTitle, author, image, tags, altTitles, _v2: true });
