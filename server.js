@@ -397,8 +397,90 @@ app.use(express.static(path.join(__dirname), {
   index: 'index.html',
 }));
 
+// ─── HCDN Anti-bot Solver ─────────────────────────────────────────────────────
+// Transparently solves HCDN JS proof-of-work challenges (used on sites like apcomics.org).
+// Flow: GET page → GET /hcdn-cgi/jschallenge (gets cjs/challengeUrl) →
+//       SHA-256(cjs) → POST answer → collect bypass cookies → GET real page.
+
+function isHcdnPage(html) {
+  return typeof html === 'string' && html.includes('/hcdn-cgi/jschallenge');
+}
+
+async function solveHcdnChallenge(targetUrl, baseHeaders) {
+  const origin = new URL(targetUrl).origin;
+  const jar = {};
+
+  function harvest(resp) {
+    const cookies = typeof resp.headers.getSetCookie === 'function'
+      ? resp.headers.getSetCookie()
+      : (resp.headers.get('set-cookie') ? [resp.headers.get('set-cookie')] : []);
+    for (const c of cookies) {
+      const part = c.split(';')[0].trim();
+      const eq = part.indexOf('=');
+      if (eq > 0) jar[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+    }
+  }
+
+  function cookieStr() {
+    return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 20000);
+
+  try {
+    const h = { ...baseHeaders };
+
+    // 1. Initial request — harvest any session cookies from the challenge page
+    const initResp = await fetch(targetUrl, { signal: ctrl.signal, headers: { ...h, Cookie: cookieStr() } });
+    harvest(initResp);
+
+    // 2. Load the challenge script — sets cjs, jsChallengeUrl, uri
+    const scriptResp = await fetch(`${origin}/hcdn-cgi/jschallenge`, {
+      signal: ctrl.signal,
+      headers: { ...h, Cookie: cookieStr(), Referer: targetUrl },
+    });
+    harvest(scriptResp);
+    if (!scriptResp.ok) return null;
+
+    const scriptText = await scriptResp.text();
+    const cjs          = scriptText.match(/const cjs = '([^']+)'/)?.[1];
+    const challengePath = scriptText.match(/const jsChallengeUrl = '([^']+)'/)?.[1];
+    if (!cjs || !challengePath) return null;
+    const challengeUrl = challengePath.startsWith('/') ? `${origin}${challengePath}` : challengePath;
+
+    // 3. Compute SHA-256 proof-of-work (mirrors browser bbc6cf0(cjs))
+    const hash = crypto.createHash('sha256').update(cjs).digest('hex');
+
+    // 4. Submit the answer after a short delay (challenge JS waits 3 s; 700 ms is enough)
+    await new Promise(r => setTimeout(r, 700));
+    const validateResp = await fetch(challengeUrl, {
+      signal: ctrl.signal,
+      method: 'POST',
+      headers: {
+        ...h,
+        Cookie: cookieStr(),
+        Referer: targetUrl,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: `challenge=${hash}`,
+    });
+    harvest(validateResp);
+    if (!validateResp.ok) return null;
+
+    // 5. Fetch the real page using the bypass cookies
+    const finalResp = await fetch(targetUrl, { signal: ctrl.signal, headers: { ...h, Cookie: cookieStr() } });
+    harvest(finalResp);
+    const html = await finalResp.text();
+    return isHcdnPage(html) ? null : html; // null = still blocked
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── CORS Proxy ───────────────────────────────────────────────────────────────
 // Lets the browser fetch any URL server-side, avoiding CORS restrictions.
+// Automatically solves HCDN JS challenges before returning content.
 app.get('/api/proxy', async (req, res) => {
   const url = req.query.url;
   if (!url || !/^https?:\/\//.test(url)) {
@@ -407,19 +489,27 @@ app.get('/api/proxy', async (req, res) => {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 12000);
-    const resp = await fetch(url, {
-      signal: ctrl.signal,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-          '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
+    const headers = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      Accept:
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    };
+    const resp = await fetch(url, { signal: ctrl.signal, headers });
     clearTimeout(timer);
     const text = await resp.text();
+
+    // Auto-solve HCDN challenge if detected
+    if (isHcdnPage(text)) {
+      const solved = await solveHcdnChallenge(url, headers).catch(() => null);
+      if (solved) {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.send(solved);
+      }
+    }
+
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(resp.status).send(text);
   } catch (e) {
@@ -472,22 +562,27 @@ app.get('/api/nh/:id', async (req, res) => {
       'User-Agent': 'VLT-Tracker/1.0.4 (https://github.com/jt-ito/vlt-tracker)',
       'Accept': 'application/json',
     };
-    // Fetch gallery detail and CDN config in parallel
-    const [galleryResp, cdnResp] = await Promise.all([
-      fetch(`https://nhentai.net/api/v2/galleries/${id}`, { signal: ctrl.signal, headers }),
-      fetch('https://nhentai.net/api/v2/cdn', { signal: ctrl.signal, headers }),
-    ]);
+    // Fetch gallery first; don't let a slow CDN endpoint block it
+    const galleryResp = await fetch(`https://nhentai.net/api/v2/galleries/${id}`, { signal: ctrl.signal, headers });
     clearTimeout(timer);
     if (!galleryResp.ok) {
       const body = await galleryResp.text().catch(() => '');
       return res.status(galleryResp.status).json({ error: `NH API ${galleryResp.status}`, detail: body });
     }
     const gallery = await galleryResp.json();
-    let coverBase = '';
-    if (cdnResp.ok) {
-      const cdn = await cdnResp.json().catch(() => ({}));
-      coverBase = (cdn.thumb_servers?.[0] || cdn.image_servers?.[0] || '').replace(/\/$/, '');
-    }
+    // Fetch CDN config with a short independent timeout; fall back to known-good host
+    let coverBase = 'https://t2.nhentai.net';
+    try {
+      const cdnCtrl = new AbortController();
+      const cdnTimer = setTimeout(() => cdnCtrl.abort(), 4000);
+      const cdnResp = await fetch('https://nhentai.net/api/v2/cdn', { signal: cdnCtrl.signal, headers });
+      clearTimeout(cdnTimer);
+      if (cdnResp.ok) {
+        const cdn = await cdnResp.json().catch(() => ({}));
+        const base = cdn.thumb_servers?.[0] || cdn.image_servers?.[0] || '';
+        if (base) coverBase = base.replace(/\/$/, '');
+      }
+    } catch (_) { /* CDN fetch failed — use fallback base */ }
     // Normalise to the shape tryNH() already expects
     const t = gallery.title || {};
     const prettyTitle = t.pretty || t.english || t.japanese || '';
