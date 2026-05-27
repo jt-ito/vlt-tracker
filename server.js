@@ -530,7 +530,11 @@ app.get('/api/proxy-img', async (req, res) => {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-        'Referer': new URL(url).origin + '/',
+        // MangaDex CDN checks Referer against mangadex.org, not uploads.mangadex.org
+        // Hitomi CDN checks Referer against hitomi.la, not the CDN subdomain
+        'Referer': /uploads\.mangadex\.org/i.test(url) ? 'https://mangadex.org/'
+                 : /gold-usergeneratedcontent\.net/i.test(url) ? 'https://hitomi.la/'
+                 : new URL(url).origin + '/',
       },
     });
     clearTimeout(timer);
@@ -543,6 +547,77 @@ app.get('/api/proxy-img', async (req, res) => {
   } catch (e) {
     if (e.name === 'AbortError') return res.status(504).send('Request timed out');
     res.status(502).send(e.message);
+  }
+});
+
+// ─── Hitomi.la Gallery (SNI-bypass endpoint) ─────────────────────────────────
+// GET /api/hitomi/:id — fetches ltn.gold-usergeneratedcontent.net/galleries/{id}.js server-side.
+// hitomi.la moved its resource CDN to gold-usergeneratedcontent.net; SNI blocking
+// requires https.request with servername:'' to bypass.  Returns normalised JSON.
+app.get('/api/hitomi/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Invalid ID' });
+  const https = require('https');
+  try {
+    const raw = await new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'ltn.gold-usergeneratedcontent.net',
+        port: 443,
+        path: `/galleries/${id}.js`,
+        method: 'GET',
+        servername: '',          // bypass SNI blocking
+        rejectUnauthorized: false,
+        headers: {
+          'Referer': 'https://hitomi.la/',
+          'User-Agent': 'Mozilla/5.0 (compatible)',
+        },
+        timeout: 15000,
+      };
+      const request = https.request(options, r => {
+        let data = '';
+        r.on('data', c => data += c);
+        r.on('end', () => {
+          if (r.statusCode === 404) return reject(Object.assign(new Error('not found'), { status: 404 }));
+          if (r.statusCode !== 200) return reject(new Error(`HTTP ${r.statusCode}`));
+          resolve(data);
+        });
+      });
+      request.on('error', reject);
+      request.on('timeout', () => { request.destroy(); reject(new Error('timeout')); });
+      request.end();
+    });
+
+    // Response is: `var galleryinfo = {...};`  (18-char prefix, per node-hitomi)
+    const info = JSON.parse(raw.slice(18));
+
+    const rawTitle = info.title || info.japanese_title || '';
+    const altSet = new Set();
+    if (info.title) altSet.add(info.title);
+    if (info.japanese_title) altSet.add(info.japanese_title);
+    const altTitles = [...altSet].filter(t => t !== rawTitle);
+
+    const author = (info.artists || [])
+      .map(a => (a.artist || '').trim()).filter(Boolean).join(', ');
+
+    const tags = (info.tags || [])
+      .map(t => (t.tag || '').trim()).filter(Boolean);
+
+    // Thumbnail from first file hash — route through proxy-img so browser loads it
+    // with Referer: https://hitomi.la/ (required by the CDN)
+    let image = '';
+    try {
+      const hash = info.files?.[0]?.hash || '';
+      if (hash) {
+        const b = hash.slice(-3);
+        const cdnUrl = `https://tn.gold-usergeneratedcontent.net/webpsmalltn/${b.slice(-1)}/${b.slice(-3, -1)}/${hash}.webp`;
+        image = `/api/proxy-img?url=${encodeURIComponent(cdnUrl)}`;
+      }
+    } catch (_) {}
+
+    res.json({ title: rawTitle, altTitles, author, tags, image, _hitomi: true });
+  } catch (e) {
+    if (e.status === 404) return res.status(404).json({ error: 'Gallery not found (404)' });
+    res.status(502).json({ error: e.message });
   }
 });
 

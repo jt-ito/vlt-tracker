@@ -2684,6 +2684,89 @@
   // ── Known-site API handlers ──────────────────────────────────────────────
   // These hit official public APIs so Cloudflare is never in the picture.
 
+  async function tryHitomi(url) {
+    if (!/hitomi\.la/i.test(url)) return null;
+    const m = url.match(/(\d+)\.html/i);
+    if (!m) return null;
+    const id = m[1];
+
+    // Primary: server-side endpoint uses Node https.request with servername:''
+    // to bypass hitomi.la's SNI blocking on ltn.gold-usergeneratedcontent.net.
+    let info = null;
+    try {
+      const res = await fetch(`/api/hitomi/${id}`, { signal: AbortSignal.timeout(20000) });
+      if (res.status === 404) {
+        const e = new Error('Gallery not found (404)');
+        e.notFound = true;
+        throw e;
+      }
+      if (res.ok) info = await res.json();
+    } catch (e) {
+      if (e.notFound) throw e;
+    }
+
+    // Fallback: direct fetch for Electron (Chromium may handle SNI differently)
+    if (!info) {
+      try {
+        const apiUrl = `https://ltn.gold-usergeneratedcontent.net/galleries/${id}.js`;
+        const res = await fetch(apiUrl, {
+          signal: AbortSignal.timeout(12000),
+          headers: { Referer: 'https://hitomi.la/' },
+        });
+        if (res.ok) {
+          const raw = await res.text();
+          try { info = JSON.parse(raw.slice(18)); } catch (_) {}
+        }
+      } catch (_) {}
+    }
+
+    if (!info) return null;
+
+    // Server response is already normalised ({ title, author, tags, altTitles, image, _hitomi })
+    // Raw galleryinfo has artists[], tags[], files[] — needs manual extraction.
+    if (info._hitomi) {
+      if (!info.title) return null;
+      return { title: pickTitle(info.title), author: info.author || '', image: info.image || '',
+               description: '', tags: info.tags || [], altTitles: info.altTitles || [], url };
+    }
+
+    // ── Electron fallback: raw galleryinfo object below ──
+    const rawTitle = info.title || info.japanese_title || '';
+    if (!rawTitle) return null;
+    const title = pickTitle(rawTitle);
+    if (!title) return null;
+
+    const altSet = new Set();
+    if (info.title && info.title !== title) altSet.add(info.title);
+    if (info.japanese_title && info.japanese_title !== title) altSet.add(info.japanese_title);
+    rawTitle.split('|').map(s => s.trim()).filter(s => s && s !== title).forEach(s => altSet.add(s));
+    const altTitles = [...altSet];
+
+    const author = (info.artists || [])
+      .map(a => (a.artist || a.name || '').replace(/_/g, ' ').trim())
+      .filter(Boolean).join(', ');
+
+    const tags = (info.tags || [])
+      .map(t => (t.tag || t.name || '').replace(/_/g, ' ').trim())
+      .filter(Boolean);
+
+    // image may already be a /api/proxy-img URL (from server response),
+    // or we build it from the raw galleryinfo hash (Electron fallback path)
+    let image = info.image || '';
+    if (!image) {
+      try {
+        const hash = info.files?.[0]?.hash || '';
+        if (hash) {
+          const b = hash.slice(-3);
+          const cdnUrl = `https://tn.gold-usergeneratedcontent.net/webpsmalltn/${b.slice(-1)}/${b.slice(-3, -1)}/${hash}.webp`;
+          image = `/api/proxy-img?url=${encodeURIComponent(cdnUrl)}`;
+        }
+      } catch (_) {}
+    }
+
+    return { title, author, image, description: '', tags, altTitles, url };
+  }
+
   async function tryMangaDex(url) {
     // Match /title/<uuid> or /manga/<uuid>
     const m = url.match(/mangadex\.org\/(?:title|manga)\/([\w-]{36})/i);
@@ -2718,11 +2801,13 @@
     const title = pickTitle(rawTitle);
     const authorRel = data.relationships.find(r => r.type === 'author');
     const author = authorRel?.attributes?.name || '';
-    // Cover — requires cover_art in includes[] to have attributes.fileName
+    // Cover — proxy through /api/proxy-img so the server sends Referer: https://mangadex.org/
+    // (MangaDex CDN blocks direct browser loads that lack the correct referer)
     const coverRel = data.relationships.find(r => r.type === 'cover_art');
     let image = '';
     if (coverRel?.attributes?.fileName) {
-      image = `https://uploads.mangadex.org/covers/${id}/${coverRel.attributes.fileName}.512.jpg`;
+      const coverSrc = `https://uploads.mangadex.org/covers/${id}/${coverRel.attributes.fileName}.512.jpg`;
+      image = `/api/proxy-img?url=${encodeURIComponent(coverSrc)}`;
     }
     const desc = attrs.description?.en || Object.values(attrs.description || {})[0] || '';
     const tags = (attrs.tags || []).map(t => t.attributes?.name?.en || Object.values(t.attributes?.name || {})[0] || '').filter(Boolean);
@@ -3239,6 +3324,7 @@
       result = await tryMangaDex(rawUrl).catch(() => null);
       if (!result) result = await tryNH(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
       if (!result) result = await tryAniList(rawUrl).catch(() => null);
+      if (!result) result = await tryHitomi(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
 
       // Use session cache to skip approaches that are known to fail for this host.
       const _cachedMode = _getCachedFetchMode(rawUrl);
@@ -3880,6 +3966,7 @@
     result = await tryMangaDex(rawUrl).catch(() => null);
     if (!result) result = await tryNH(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
     if (!result) result = await tryAniList(rawUrl).catch(() => null);
+    if (!result) result = await tryHitomi(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
     if (!result) {
       try {
         const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
