@@ -2125,25 +2125,37 @@
   function pickTitle(raw) {
     if (!raw) return '';
     const parts = raw.split('|').map(s => s.trim()).filter(Boolean);
-    if (parts.length <= 1) return raw.trim();
-    const lang = settings.lang;
-    // Convention on most manga sites (nhentai, MangaDex, etc.):
-    //   [0] = original/native title  |  [last] = translated/English title
-    // So for English we prefer the LAST segment; for CJK we prefer the FIRST.
-    const isCJK = s => /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(s);
-    const isLatin = s => /^[\x00-\x7f\s\-'.,!?()[\]]+$/.test(s);
-    if (lang === 'en') {
-      // Last latin segment, falling back to the last segment overall
-      const latinParts = parts.filter(isLatin);
-      return latinParts.length ? latinParts[latinParts.length - 1] : parts[parts.length - 1];
-    } else if (lang === 'ja' || lang === 'zh' || lang === 'ko') {
-      // First CJK segment, falling back to first overall
-      return parts.find(isCJK) || parts[0];
-    } else if (lang === 'ja-ro') {
-      // First latin segment (romaji sits before the English translation on most sites)
-      return parts.find(isLatin) || parts[0];
+    let picked;
+    if (parts.length <= 1) {
+      picked = raw.trim();
+    } else {
+      const lang = settings.lang;
+      // Convention on most manga sites (nhentai, MangaDex, etc.):
+      //   [0] = original/native title  |  [last] = translated/English title
+      // So for English we prefer the LAST segment; for CJK we prefer the FIRST.
+      const isCJK = s => /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(s);
+      const isLatin = s => /^[\x00-\x7f\s\-'.,!?()[\]]+$/.test(s);
+      if (lang === 'en') {
+        // Last latin segment, falling back to the last segment overall
+        const latinParts = parts.filter(isLatin);
+        picked = latinParts.length ? latinParts[latinParts.length - 1] : parts[parts.length - 1];
+      } else if (lang === 'ja' || lang === 'zh' || lang === 'ko') {
+        // First CJK segment, falling back to first overall
+        picked = parts.find(isCJK) || parts[0];
+      } else if (lang === 'ja-ro') {
+        // First latin segment (romaji sits before the English translation on most sites)
+        picked = parts.find(isLatin) || parts[0];
+      } else {
+        picked = parts[0];
+      }
     }
-    return parts[0];
+    // Strip metadata/status bracket tags commonly appended to doujin titles
+    picked = picked
+      .replace(/\s*\[(ongoing|completed?|end(ed)?|hiatus|dropped|english|digital|raw|translated?|decensored|uncensored|dl[- ]?ver?|digital)\]\s*/gi, ' ')
+      .replace(/\s*=+[^=]+=+\s*/g, ' ')   // =TranslatorGroup= credits
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return picked;
   }
   let cfPollInterval = null;
   let cfPollTimeout = null;
@@ -2699,10 +2711,11 @@
     // Pick title by language preference
     const langMap = { 'en': 'en', 'ja-ro': 'ja-ro', 'ja': 'ja', 'zh': 'zh', 'ko': 'ko', 'original': null };
     const prefLang = langMap[settings.lang] || 'en';
-    const title = (prefLang && attrs.title[prefLang])
+    const rawTitle = (prefLang && attrs.title[prefLang])
       || attrs.title.en
       || attrs.title['ja-ro']
       || Object.values(attrs.title)[0] || '';
+    const title = pickTitle(rawTitle);
     const authorRel = data.relationships.find(r => r.type === 'author');
     const author = authorRel?.attributes?.name || '';
     // Cover — requires cover_art in includes[] to have attributes.fileName
@@ -2713,13 +2726,15 @@
     }
     const desc = attrs.description?.en || Object.values(attrs.description || {})[0] || '';
     const tags = (attrs.tags || []).map(t => t.attributes?.name?.en || Object.values(t.attributes?.name || {})[0] || '').filter(Boolean);
-    // Alt titles — deduplicated, main title excluded
-    const altTitles = (attrs.altTitles || [])
-      .flatMap(obj => Object.values(obj))
-      .map(t => t.trim())
-      .filter(t => t && t !== title)
-      .filter((t, i, arr) => arr.indexOf(t) === i)
-      .slice(0, 20);
+    // Alt titles: pipe-split discards + other language variants from attrs.title + attrs.altTitles
+    const pipeParts = rawTitle.split('|').map(s => s.trim()).filter(Boolean);
+    const pipeAlts = pipeParts.length > 1 ? pipeParts.filter(p => p !== title) : [];
+    const titleVariants = Object.values(attrs.title || {}).map(t => t.trim()).filter(t => t && t !== title && t !== rawTitle);
+    const altTitles = [...new Set([
+      ...pipeAlts,
+      ...titleVariants,
+      ...(attrs.altTitles || []).flatMap(obj => Object.values(obj)).map(t => t.trim()).filter(t => t && t !== title),
+    ])].slice(0, 20);
     return { title, author, image, description: desc, tags, altTitles, url };
   }
 
@@ -2734,12 +2749,22 @@
     //    Returns 401 if no key saved, or network error in Electron — fall through.
     try {
       const res = await fetch(`/api/nh/${id}`, { signal: AbortSignal.timeout(20000) });
+      if (res.status === 404) {
+        const e = new Error('Gallery not found (404)');
+        e.notFound = true;
+        throw e;
+      }
       if (res.ok) {
         const data = await res.json();
         if (data._v2 && data.title) {
+          const pickedTitle = pickTitle(data.title);
+          const pipeParts = data.title.split('|').map(s => s.trim()).filter(Boolean);
+          const pipeAlts = pipeParts.length > 1 ? pipeParts.filter(p => p !== pickedTitle) : [];
+          const baseAlts = (data.altTitles || []).filter(a => a !== pickedTitle);
+          const altTitles = [...new Set([...pipeAlts, ...baseAlts])];
           return {
-            title: data.title, author: data.author || '', image: data.image || '',
-            description: '', tags: data.tags || [], altTitles: data.altTitles || [], url,
+            title: pickedTitle, author: data.author || '', image: data.image || '',
+            description: '', tags: data.tags || [], altTitles, url,
           };
         }
       }
@@ -2775,11 +2800,16 @@
     const image = json.media_id
       ? `https://t.nhentai.net/galleries/${json.media_id}/cover.${coverExt}`
       : '';
-    const title = json.title?.pretty || json.title?.english || json.title?.japanese || '';
+    const rawTitle = json.title?.pretty || json.title?.english || json.title?.japanese || '';
+    const title = pickTitle(rawTitle);
     const author = (json.tags || []).filter(t => t.type === 'artist').map(t => t.name).join(', ');
     const tags = (json.tags || []).filter(t => t.type === 'tag').map(t => t.name);
     const allTitles = [json.title?.english, json.title?.japanese, json.title?.pretty].filter(Boolean);
-    const altTitles = allTitles.filter(t => t !== title).filter((t, i, arr) => arr.indexOf(t) === i);
+    const pipeParts = rawTitle.split('|').map(s => s.trim()).filter(Boolean);
+    const altTitles = [...new Set([
+      ...pipeParts.filter(p => p !== title),
+      ...allTitles.filter(t => t !== title && t !== rawTitle),
+    ])];
     return { title, author, image, description: '', tags, altTitles, url };
   }
 
@@ -2975,6 +3005,7 @@
 
     // Prefer span.pretty for sites like nhentai where h1 has [Artist] prefix
     let title = cleanStr(doc.querySelector('span.pretty')?.textContent)
+      || cleanStr(doc.querySelector('h1#gallery-brand a')?.textContent)  // hitomi.la
       || cleanStr(doc.querySelector('.post-title h1, .post-title')?.textContent)
       || getMeta('og:title', 'twitter:title') || doc.title || '';
     // If the title is pipe-separated, pick based on language setting
@@ -3103,6 +3134,12 @@
       }
     }
 
+    // 6e. hitomi.la: h2#artists ul.comma-list li a
+    if (!author) {
+      const el = doc.querySelector('h2#artists ul.comma-list li a, h2#artists a');
+      if (el) { const v = cleanStr(el.textContent); if (validAuthor(v)) author = v; }
+    }
+
     // 6c. Fallback: use [Author] extracted from title
     if (!author && titleBracketAuthor) author = titleBracketAuthor;
 
@@ -3147,6 +3184,11 @@
         const t = cleanStr(a.textContent);
         if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
       }
+    }
+    // hitomi.la: ul#tags li a  (strip trailing ♀/♂ gender glyphs)
+    for (const a of doc.querySelectorAll('ul#tags li a')) {
+      const t = cleanStr(a.textContent).replace(/\s*[\u2640\u2642]\s*$/, '').trim();
+      if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
     }
 
     // Alt titles from JSON-LD alternateName / alternateNames
@@ -3195,7 +3237,7 @@
       // 1. Try known-site APIs first (no CF involved)
       statusText.textContent = 'Checking for official API…';
       result = await tryMangaDex(rawUrl).catch(() => null);
-      if (!result) result = await tryNH(rawUrl).catch(() => null);
+      if (!result) result = await tryNH(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
       if (!result) result = await tryAniList(rawUrl).catch(() => null);
 
       // Use session cache to skip approaches that are known to fail for this host.
@@ -3256,7 +3298,13 @@
       showImportPreview(result, rawUrl);
     } catch (err) {
       statusEl.classList.add('hidden');
-      if (err.cfDetected) {
+      if (err.notFound) {
+        statusEl.classList.remove('hidden');
+        statusText.textContent = '❌ Gallery not found — this ID does not exist on nhentai';
+        btn.disabled = false;
+        btn.textContent = 'Retry';
+        btn.onclick = () => scrapeUrl();
+      } else if (err.cfDetected) {
         // Show brief notice then open in-app iframe panel
         document.getElementById('cfDetectNotice').classList.remove('hidden');
         btn.disabled = true;
@@ -3830,7 +3878,7 @@
     const dummy = { textContent: '' }; // satisfy fetchViaProxy progress arg
     let result = null;
     result = await tryMangaDex(rawUrl).catch(() => null);
-    if (!result) result = await tryNH(rawUrl).catch(() => null);
+    if (!result) result = await tryNH(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
     if (!result) result = await tryAniList(rawUrl).catch(() => null);
     if (!result) {
       try {
@@ -3979,7 +4027,9 @@
         }
       } catch (err) {
         const icon = err.cfDetected ? '🛡️' : '❌';
-        const msg = err.cfDetected ? 'Cloudflare protected — skipped' : `Failed: ${escHtml(err.message)}`;
+        const msg = err.cfDetected ? 'Cloudflare protected — skipped'
+          : err.notFound ? `Not found (404) — skipped`
+          : `Failed: ${escHtml(err.message)}`;
         logEl.querySelector('.batch-log-icon').textContent = icon;
         logEl.querySelector('.batch-log-text').innerHTML = `${msg} <span style="opacity:0.6">${escHtml(displayInput)}</span>`;
         failed++;
