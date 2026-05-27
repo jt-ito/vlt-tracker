@@ -1584,6 +1584,17 @@
 
         <div class="settings-row">
           <div>
+            <div class="settings-label">Middle-Click Opens Link</div>
+            <div class="settings-desc">Middle-clicking an entry opens its source link in a new background tab (only applies to entries that have a link).</div>
+          </div>
+          <label class="toggle" title="Middle-click opens link">
+            <input type="checkbox" id="settingMiddleClickLink" onchange="saveSettings()" />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+
+        <div class="settings-row">
+          <div>
             <div class="settings-label">Cache Cover Images</div>
             <div class="settings-desc">Download and store cover images locally so they load without an internet connection. New and edited entries are cached on save.</div>
           </div>
@@ -1894,6 +1905,7 @@
     settings.lang = document.getElementById('settingLang').value;
     settings.cacheImages = document.getElementById('settingCacheImages').checked;
     settings.showLinks = document.getElementById('settingShowLinks').checked;
+    settings.middleClickLink = document.getElementById('settingMiddleClickLink').checked;
     localStorage.setItem(storeKey('mangaSettings'), JSON.stringify(settings));
     renderEntries();
   }
@@ -1901,6 +1913,7 @@
     document.getElementById('settingLang').value = settings.lang;
     document.getElementById('settingCacheImages').checked = !!settings.cacheImages;
     document.getElementById('settingShowLinks').checked = settings.showLinks !== false;
+    document.getElementById('settingMiddleClickLink').checked = !!settings.middleClickLink;
     updateCacheInfo();
     loadNhKeyField();
     loadMdxKeyField();
@@ -2543,9 +2556,17 @@
     else if (currentView === 'links') renderLinks(filtered, container);
   }
 
+  function handleCardAuxClick(event, id) {
+    if (event.button !== 1 || !settings.middleClickLink) return;
+    const entry = entries.find(e => e.id === id);
+    if (!entry?.link) return;
+    event.preventDefault();
+    window.open(entry.link, '_blank', 'noopener,noreferrer');
+  }
+
   function renderList(filtered, container) {
     container.innerHTML = `<div class="entries-list">${filtered.map(e => `
-      <div class="entry-card" onclick="openModal('${e.id}')">
+      <div class="entry-card" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')">
         <div class="entry-thumb-sm">${thumbHtml(e)}</div>
         <div class="entry-info">
           <div class="entry-title">${escHtml(e.title)}</div>
@@ -2574,7 +2595,7 @@
 
   function renderCompact(filtered, container) {
     container.innerHTML = `<div class="entries-compact">${filtered.map(e => `
-      <div class="entry-compact-row" onclick="openModal('${e.id}')">
+      <div class="entry-compact-row" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')">
         <div class="compact-title">${escHtml(e.title)}</div>
         <div class="compact-author">${e.author ? escHtml(e.author) : '<span style="color:var(--text-muted);font-style:italic">Unknown</span>'}</div>
         <div class="compact-status">${statusPill(e.status)}</div>
@@ -2584,7 +2605,7 @@
 
   function renderGrid(filtered, container) {
     container.innerHTML = `<div class="entries-grid">${filtered.map(e => `
-      <div class="entry-grid-card" onclick="openModal('${e.id}')">
+      <div class="entry-grid-card" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')">
         <div class="entry-thumb-lg">
           ${thumbHtml(e, 'lg')}
           <span class="status-pill thumb-status s-${e.status}">${STATUS_LABELS[e.status]}</span>
@@ -2601,7 +2622,7 @@
 
   function renderLinks(filtered, container) {
     container.innerHTML = `<div class="entries-links">${filtered.map(e => `
-      <div class="entry-link-row" onclick="openModal('${e.id}')">
+      <div class="entry-link-row" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')">
         ${statusPill(e.status)}
         <div class="link-main">
           <div class="link-title">
@@ -3091,11 +3112,16 @@
     // Prefer span.pretty for sites like nhentai where h1 has [Artist] prefix
     let title = cleanStr(doc.querySelector('span.pretty')?.textContent)
       || cleanStr(doc.querySelector('h1#gallery-brand a')?.textContent)  // hitomi.la
+      || getMeta('og:title', 'twitter:title')  // server-set, page-specific — preferred over DOM scraping (avoids trending-section h1s on Madara/WordPress sites)
+      || cleanStr(doc.querySelector('article .post-title h1')?.textContent)  // Madara theme fallback
       || cleanStr(doc.querySelector('.post-title h1, .post-title')?.textContent)
-      || getMeta('og:title', 'twitter:title') || doc.title || '';
+      || doc.title || '';
     // If the title is pipe-separated, pick based on language setting
     title = pickTitle(title);
-    title = title.replace(/\s*[|\u2014\-]\s*[^\|\u2014\-]{1,30}$/, '').trim();
+    // Strip trailing site-name suffix ("Title - Site Name", "Title | Site").
+    // Require space on both sides of bare dash so we don't match hyphens inside words
+    // (e.g. the old regex would match "-Hentai" in "E-Hentai Galleries" and leave "- E" dangling).
+    title = title.replace(/\s+[-\u2013\u2014]\s+.{1,35}$|\s*[|\u2014]\s*.{1,35}$/, '').trim();
     // Strip known site-name suffixes
     const TITLE_STRIP_SUFFIXES = [
       '- Free Hentai Comics Online',
@@ -3117,7 +3143,16 @@
     }
     // Strip every [...] from the title (start and end)
     title = title.replace(/\s*\[([^\]]+)\]\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
-    const image = getMeta('og:image', 'twitter:image');
+    // Strip trailing parentheticals — in doujin/fan-site titles these are always metadata
+    // (e.g. "(COMIC Kairakuten 2019-04)", "(C89)", "(Anthology)"). Mainstream titles use
+    // dedicated handlers (MangaDex, AniList) that never reach this code path.
+    title = title.replace(/(\s*\([^)]+\))+$/, '').trim();
+    let image = getMeta('og:image', 'twitter:image');
+    // Prefer actual thumbnail over low-quality opengraph variant.
+    // niyaniya.moe (and nozomi.la) serve `nozomi.erocdn.net/opengraph/…` as og:image
+    // but a full-resolution thumbnail is available in the cover <img> element.
+    const _nozomiThumb = doc.querySelector('img[src*="nozomi.erocdn.net/thumbnail"], img[src*="erocdn.net/thumbnail"]');
+    if (_nozomiThumb) { const _s = _nozomiThumb.getAttribute('src') || ''; if (_s) image = _s; }
     const description = getMeta('og:description', 'twitter:description', 'description');
 
     let author = '';
@@ -3273,6 +3308,13 @@
     // hitomi.la: ul#tags li a  (strip trailing ♀/♂ gender glyphs)
     for (const a of doc.querySelectorAll('ul#tags li a')) {
       const t = cleanStr(a.textContent).replace(/\s*[\u2640\u2642]\s*$/, '').trim();
+      if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
+    }
+    // niyaniya.moe (and nozomi-style sites): a[rel="tag"] with a .text-balance span inside
+    for (const a of doc.querySelectorAll('a[rel="tag"]')) {
+      const span = a.querySelector('[class*="text-balance"], span');
+      if (!span) continue;
+      const t = cleanStr(span.textContent).replace(/\s*[\u2640\u2642]\s*$/, '').trim();
       if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
     }
 
