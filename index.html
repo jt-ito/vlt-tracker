@@ -1385,9 +1385,10 @@
           <div class="progress-type-toggle">
             <button class="progress-type-btn active" id="btnChapters" onclick="setProgressType('chapters')">Chapters</button>
             <button class="progress-type-btn" id="btnVolumes" onclick="setProgressType('volumes')">Volumes</button>
+            <button class="progress-type-btn" id="btnPages" onclick="setProgressType('pages')">Pages</button>
           </div>
           <div class="progress-warning hidden" id="progressWarning">
-            ⚠️ You can only track by <strong>chapters</strong> or <strong>volumes</strong> — not both. Switch between them above. Changing type will clear the existing value.
+            ⚠️ You can only track by <strong>chapters</strong>, <strong>volumes</strong>, or <strong>pages</strong> — not multiple. Switch between them above. Changing type will clear the existing value.
           </div>
           <div class="progress-inputs">
             <div class="field" id="chaptersField">
@@ -1405,6 +1406,14 @@
             <div class="field hidden" id="volumesField2">
               <label>Total volumes</label>
               <input type="number" id="fVolumesTotal" min="0" placeholder="?" />
+            </div>
+            <div class="field hidden" id="pagesField">
+              <label>Pages read</label>
+              <input type="number" id="fPagesRead" min="0" placeholder="0" />
+            </div>
+            <div class="field hidden" id="pagesField2">
+              <label>Total pages</label>
+              <input type="number" id="fPagesTotal" min="0" placeholder="?" />
             </div>
           </div>
         </div>
@@ -1487,7 +1496,7 @@
 
 
 <!-- Batch Import Modal -->
-<div class="modal-backdrop hidden" id="batchBackdrop" onclick="if(event.target===this&&!batchRunning)closeBatchImport()">
+<div class="modal-backdrop hidden" id="batchBackdrop" onclick="if(event.target===this&&_backdropMousedownTarget===this&&!batchRunning)closeBatchImport()">
   <div class="modal" role="dialog" aria-modal="true" style="max-width:580px;">
     <div class="modal-header">
       <span class="modal-title">📥 Bulk Import</span>
@@ -1545,7 +1554,7 @@
 </div>
 
 <!-- Settings Modal -->
-<div class="modal-backdrop hidden" id="settingsBackdrop" onclick="if(event.target===this)closeSettings()">
+<div class="modal-backdrop hidden" id="settingsBackdrop" onclick="if(event.target===this&&_backdropMousedownTarget===this)closeSettings()">
   <div class="modal" role="dialog" aria-modal="true" style="max-width:460px;">
     <div class="modal-header">
       <span class="modal-title">⚙️ Settings</span>
@@ -1674,7 +1683,7 @@
 </div>
 
 <!-- Sauce Modal -->
-<div class="modal-backdrop hidden" id="sauceBackdrop" onclick="if(event.target===this)closeSauceModal()">
+<div class="modal-backdrop hidden" id="sauceBackdrop" onclick="if(event.target===this&&_backdropMousedownTarget===this)closeSauceModal()">
   <div class="modal" role="dialog" aria-modal="true" style="max-width:380px;">
     <div class="modal-header">
       <span class="modal-title">🌶️ &ldquo;Sauce&rdquo;</span>
@@ -1722,11 +1731,12 @@
 <script>
   // ── State ──
   let entries = [];
+  let _backdropMousedownTarget = null; // tracks mousedown origin to prevent drag-to-select closing modals
   let currentFilter = 'all';
   let currentSort = 'title';
   let currentView = 'grid';
   let editingId = null;
-  let progressType = 'chapters'; // 'chapters' | 'volumes'
+  let progressType = 'chapters'; // 'chapters' | 'volumes' | 'pages'
   let dupeConfirmed = false;
   let cfPanelUrl = '';
 
@@ -2248,11 +2258,22 @@
       document.getElementById('fChaptersTotal').value = entry?.chaptersTotal ?? '';
       document.getElementById('fVolumesRead').value = '';
       document.getElementById('fVolumesTotal').value = '';
-    } else {
+      document.getElementById('fPagesRead').value = '';
+      document.getElementById('fPagesTotal').value = '';
+    } else if (pType === 'volumes') {
       document.getElementById('fVolumesRead').value = entry?.volumesRead ?? '';
       document.getElementById('fVolumesTotal').value = entry?.volumesTotal ?? '';
       document.getElementById('fChaptersRead').value = '';
       document.getElementById('fChaptersTotal').value = '';
+      document.getElementById('fPagesRead').value = '';
+      document.getElementById('fPagesTotal').value = '';
+    } else {
+      document.getElementById('fPagesRead').value = entry?.pagesRead ?? '';
+      document.getElementById('fPagesTotal').value = entry?.pagesTotal ?? '';
+      document.getElementById('fChaptersRead').value = '';
+      document.getElementById('fChaptersTotal').value = '';
+      document.getElementById('fVolumesRead').value = '';
+      document.getElementById('fVolumesTotal').value = '';
     }
 
     previewThumb();
@@ -2274,23 +2295,26 @@
   }
 
   function backdropClick(e) {
-    if (e.target === document.getElementById('modalBackdrop')) closeModal();
+    if (e.target === document.getElementById('modalBackdrop') && _backdropMousedownTarget === e.target) closeModal();
   }
 
   function setProgressType(type) {
     const hadValue =
       (progressType === 'chapters' && (document.getElementById('fChaptersRead').value || document.getElementById('fChaptersTotal').value)) ||
-      (progressType === 'volumes'  && (document.getElementById('fVolumesRead').value  || document.getElementById('fVolumesTotal').value));
+      (progressType === 'volumes'  && (document.getElementById('fVolumesRead').value  || document.getElementById('fVolumesTotal').value)) ||
+      (progressType === 'pages'    && (document.getElementById('fPagesRead').value    || document.getElementById('fPagesTotal').value));
 
     if (type !== progressType) {
       if (hadValue) {
         document.getElementById('progressWarning').classList.remove('hidden');
-        // Clear old values when switching
-        document.getElementById('fChaptersRead').value = '';
-        document.getElementById('fChaptersTotal').value = '';
-        document.getElementById('fVolumesRead').value = '';
-        document.getElementById('fVolumesTotal').value = '';
       }
+      // Clear all fields when switching
+      document.getElementById('fChaptersRead').value = '';
+      document.getElementById('fChaptersTotal').value = '';
+      document.getElementById('fVolumesRead').value = '';
+      document.getElementById('fVolumesTotal').value = '';
+      document.getElementById('fPagesRead').value = '';
+      document.getElementById('fPagesTotal').value = '';
       progressType = type;
       updateProgressUI();
     }
@@ -2298,12 +2322,17 @@
 
   function updateProgressUI() {
     const isChapters = progressType === 'chapters';
+    const isVolumes  = progressType === 'volumes';
+    const isPages    = progressType === 'pages';
     document.getElementById('btnChapters').classList.toggle('active', isChapters);
-    document.getElementById('btnVolumes').classList.toggle('active', !isChapters);
+    document.getElementById('btnVolumes').classList.toggle('active', isVolumes);
+    document.getElementById('btnPages').classList.toggle('active', isPages);
     document.getElementById('chaptersField').classList.toggle('hidden', !isChapters);
     document.getElementById('chaptersField2').classList.toggle('hidden', !isChapters);
-    document.getElementById('volumesField').classList.toggle('hidden', isChapters);
-    document.getElementById('volumesField2').classList.toggle('hidden', isChapters);
+    document.getElementById('volumesField').classList.toggle('hidden', !isVolumes);
+    document.getElementById('volumesField2').classList.toggle('hidden', !isVolumes);
+    document.getElementById('pagesField').classList.toggle('hidden', !isPages);
+    document.getElementById('pagesField2').classList.toggle('hidden', !isPages);
   }
 
   function previewThumb() {
@@ -2362,6 +2391,8 @@
       chaptersTotal: progressType === 'chapters' ? (parseInt(document.getElementById('fChaptersTotal').value) || null) : null,
       volumesRead: progressType === 'volumes' ? (parseInt(document.getElementById('fVolumesRead').value) || null) : null,
       volumesTotal: progressType === 'volumes' ? (parseInt(document.getElementById('fVolumesTotal').value) || null) : null,
+      pagesRead: progressType === 'pages' ? (parseInt(document.getElementById('fPagesRead').value) || null) : null,
+      pagesTotal: progressType === 'pages' ? (parseInt(document.getElementById('fPagesTotal').value) || null) : null,
       tags: document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean),
       altTitles: altTitlesState.length ? [...altTitlesState] : [],
       dateAdded: editingId ? (entries.find(e => e.id === editingId)?.dateAdded || Date.now()) : Date.now(),
@@ -2410,6 +2441,10 @@
       const r = entry.volumesRead != null ? entry.volumesRead : '–';
       const t = entry.volumesTotal != null ? entry.volumesTotal : '?';
       return `Vol. ${r} / ${t}`;
+    } else if (entry.progressType === 'pages') {
+      const r = entry.pagesRead != null ? entry.pagesRead : '–';
+      const t = entry.pagesTotal != null ? entry.pagesTotal : '?';
+      return r !== '–' || t !== '?' ? `Pg. ${r} / ${t}` : '';
     } else {
       const r = entry.chaptersRead != null ? entry.chaptersRead : '–';
       const t = entry.chaptersTotal != null ? entry.chaptersTotal : '?';
@@ -2698,7 +2733,7 @@
     document.getElementById('importBackdrop').classList.add('hidden');
   }
   function importBackdropClick(e) {
-    if (e.target === document.getElementById('importBackdrop')) closeImportModal();
+    if (e.target === document.getElementById('importBackdrop') && _backdropMousedownTarget === e.target) closeImportModal();
   }
 
   // ── Scraper ──
@@ -3112,6 +3147,7 @@
     // Prefer span.pretty for sites like nhentai where h1 has [Artist] prefix
     let title = cleanStr(doc.querySelector('span.pretty')?.textContent)
       || cleanStr(doc.querySelector('h1#gallery-brand a')?.textContent)  // hitomi.la
+      || cleanStr(doc.querySelector('#info-block #info h1')?.textContent)  // hentaikisu.com
       || getMeta('og:title', 'twitter:title')  // server-set, page-specific — preferred over DOM scraping (avoids trending-section h1s on Madara/WordPress sites)
       || cleanStr(doc.querySelector('article .post-title h1')?.textContent)  // Madara theme fallback
       || cleanStr(doc.querySelector('.post-title h1, .post-title')?.textContent)
@@ -3220,7 +3256,7 @@
       for (const container of doc.querySelectorAll('.tag-container, .field-name, [class*="tag-container"]')) {
         const label = container.childNodes[0]?.textContent || container.querySelector('span:first-child, b, strong')?.textContent || '';
         if (!/^artists?:|^authors?:/i.test(label.trim())) continue;
-        const nameEl = container.querySelector('span.name, a > span.name, a.tag span, a span');
+        const nameEl = container.querySelector('span.name, a > span.name, a.tag span, a span, a.tag');
         if (nameEl) { const v = cleanStr(nameEl.textContent); if (validAuthor(v)) { author = v; break; } }
       }
     }
@@ -3304,6 +3340,11 @@
         const t = cleanStr(a.textContent);
         if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
       }
+    }
+    // hentaikisu.com: section#tags a[href^="/tag/"] (category/genre tags only; artist/series links have different href patterns)
+    for (const a of doc.querySelectorAll('section#tags a[href^="/tag/"]')) {
+      const t = cleanStr(a.textContent);
+      if (t && t.length < 60 && !tags.includes(t)) tags.push(t);
     }
     // hitomi.la: ul#tags li a  (strip trailing ♀/♂ gender glyphs)
     for (const a of doc.querySelectorAll('ul#tags li a')) {
@@ -4231,6 +4272,9 @@
     renderEntries();
     updateCacheInfo();
   }
+  // Record where each mousedown starts so backdrop click handlers can tell
+  // whether the click was a genuine outside-click or the end of a text-selection drag.
+  document.addEventListener('mousedown', e => { _backdropMousedownTarget = e.target; });
   init();
 </script>
 
