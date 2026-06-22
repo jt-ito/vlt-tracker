@@ -339,7 +339,7 @@ function _decryptSecret(userId, ciphertextHex, ivHex) {
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
 }
 
-const ALLOWED_SECRET_NAMES = new Set(['nh-key', 'mdx-key']);
+const ALLOWED_SECRET_NAMES = new Set(['nh-key']);
 
 // Save a secret (value sent from client, encrypted on server, never stored plain)
 app.post('/api/secrets/:name', requireAuth, (req, res) => {
@@ -667,6 +667,55 @@ app.get('/api/nh/:id', async (req, res) => {
     const allTitles = [t.english, t.japanese, t.pretty].filter(Boolean);
     const altTitles = [...new Set(allTitles.filter(x => x !== prettyTitle))];
     res.json({ title: prettyTitle, author, image, tags, altTitles, _v2: true });
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).json({ error: 'Request timed out' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// GET /api/nh/search — search nhentai v2 API using the user's stored API key
+app.get('/api/nh/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q || typeof q !== 'string') return res.status(400).json({ error: 'Missing query' });
+  const nhKey = getSecretValue(req.session?.userId, 'nh-key');
+  if (!nhKey) return res.status(401).json({ error: 'No NH API key saved' });
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const headers = {
+      'Authorization': `Key ${nhKey}`,
+      'User-Agent': 'VLT-Tracker/1.0.4 (https://github.com/jt-ito/vlt-tracker)',
+      'Accept': 'application/json',
+    };
+    
+    const searchUrl = `https://nhentai.net/api/v2/galleries/search?query=${encodeURIComponent(q)}&page=1`;
+    const searchResp = await fetch(searchUrl, { signal: ctrl.signal, headers });
+    clearTimeout(timer);
+    
+    if (!searchResp.ok) {
+      const body = await searchResp.text().catch(() => '');
+      return res.status(searchResp.status).json({ error: `NH API ${searchResp.status}`, detail: body });
+    }
+    
+    const json = await searchResp.json();
+    // V2 search returns results in json.data
+    const results = json.data || json.result || [];
+    if (!results || results.length === 0) {
+      return res.json({ results: [] });
+    }
+    
+    const gallery = results[0];
+    let coverBase = 'https://t2.nhentai.net';
+    
+    const t = gallery.title || {};
+    const prettyTitle = t.pretty || t.english || t.japanese || '';
+    const author = (gallery.tags || []).filter(tg => tg.type === 'artist').map(tg => tg.name).join(', ');
+    const tags = (gallery.tags || []).filter(tg => tg.type === 'tag').map(tg => tg.name);
+    const image = (coverBase && gallery.cover?.path) ? `${coverBase}/${gallery.cover.path.replace(/^\//, '')}` : '';
+    const allTitles = [t.english, t.japanese, t.pretty].filter(Boolean);
+    const altTitles = [...new Set(allTitles.filter(x => x !== prettyTitle))];
+    
+    res.json({ results: [{ id: gallery.id, title: prettyTitle, author, image, tags, altTitles, _v2: true, url: `https://nhentai.net/g/${gallery.id}/` }] });
   } catch (e) {
     if (e.name === 'AbortError') return res.status(504).json({ error: 'Request timed out' });
     res.status(502).json({ error: e.message });

@@ -834,6 +834,7 @@
 
     .progress-inputs { display: flex; gap: 10px; }
     .progress-inputs .field { flex: 1; }
+    .progress-inputs .field.hidden { display: none; }
 
     /* Thumbnail URL field */
     .thumb-preview {
@@ -1644,21 +1645,6 @@
           </form>
         </div>
 
-        <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px">
-          <div>
-            <div class="settings-label">MangaDex API Key</div>
-            <div class="settings-desc">Personal client token for the MangaDex API. Encrypted with AES-256-GCM and stored locally — never saved as plaintext.</div>
-          </div>
-          <form autocomplete="off" onsubmit="saveMdxKey();return false" style="display:flex;gap:6px;align-items:center">
-            <div style="position:relative;flex:1;min-width:0">
-              <input type="password" id="settingMdxKey" class="themed-input" placeholder="Paste API key…" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;padding-right:38px" />
-              <button type="button" class="btn btn-icon" id="mdxKeyEyeBtn" onclick="toggleMdxKeyVisibility()" title="Show / hide" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:0.95rem;padding:2px 5px;background:none;border:none;cursor:pointer;opacity:0.6">&#128065;</button>
-            </div>
-            <button type="submit" class="btn btn-primary" id="saveMdxKeyBtn" style="white-space:nowrap;flex-shrink:0">Save</button>
-            <button type="button" class="btn btn-ghost" onclick="clearMdxKey()" style="white-space:nowrap;flex-shrink:0">Clear</button>
-          </form>
-        </div>
-
       </div>
 
       <div class="settings-section admin-only hidden" id="accountsSection">
@@ -1926,7 +1912,6 @@
     document.getElementById('settingMiddleClickLink').checked = !!settings.middleClickLink;
     updateCacheInfo();
     loadNhKeyField();
-    loadMdxKeyField();
     if (currentUser.isAdmin) loadAccountsList();
     document.getElementById('settingsBackdrop').classList.remove('hidden');
   }
@@ -2094,84 +2079,65 @@
     }
   }
 
-  async function loadMdxKeyField() {
-    const el = document.getElementById('settingMdxKey');
-    el.value = '';
-    el.placeholder = 'Paste API key…';
-    el.type = 'password';
-    document.getElementById('mdxKeyEyeBtn').textContent = '\u{1F441}';
-    try {
-      const r = await fetch('/api/secrets/mdx-key/status');
-      const d = await r.json();
-      if (d.saved) el.placeholder = '••••• (saved — paste to replace)';
-    } catch {}
-  }
-  async function saveMdxKey() {
-    const val = document.getElementById('settingMdxKey').value.trim();
-    if (!val) return;
-    const btn = document.getElementById('saveMdxKeyBtn');
-    btn.disabled = true;
-    try {
-      const r = await fetch('/api/secrets/mdx-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value: val }),
-      });
-      if (r.ok) {
-        document.getElementById('settingMdxKey').value = '';
-        btn.textContent = 'Saved \u2713';
-        setTimeout(() => { btn.textContent = 'Save'; btn.disabled = false; loadMdxKeyField(); }, 1500);
-      } else {
-        btn.disabled = false;
-      }
-    } catch { btn.disabled = false; }
-  }
-  async function clearMdxKey() {
-    await fetch('/api/secrets/mdx-key', { method: 'DELETE' });
-    document.getElementById('settingMdxKey').value = '';
-    loadMdxKeyField();
-  }
-  function toggleMdxKeyVisibility() {
-    const el = document.getElementById('settingMdxKey');
-    const btn = document.getElementById('mdxKeyEyeBtn');
-    if (el.type === 'password') {
-      el.type = 'text';
-      btn.style.opacity = '1';
-    } else {
-      el.type = 'password';
-      btn.style.opacity = '0.6';
+
+  // Heuristic to distinguish Romaji from English without network calls
+  function guessLatinLanguage(s) {
+    let enScore = 0;
+    let roScore = 0;
+    
+    const words = s.toLowerCase().match(/\b[a-z]+\b/g) || [];
+    const enWords = new Set(['the', 'a', 'an', 'of', 'and', 'in', 'is', 'for', 'with', 'on', 'at', 'by', 'from', 'up', 'about', 'into', 'over', 'after', 'my', 'your', 'his', 'her', 'our', 'their', 'this', 'that', 'these', 'those', 'it', 'he', 'she', 'they', 'we', 'i', 'you', 'what', 'who', 'where', 'when', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'can', 'will', 'just', 'should', 'now', 'love', 'girl', 'boy', 'man', 'woman', 'day', 'night', 'time', 'world', 'life', 'school', 'story']);
+    const roWords = new Set(['ga', 'wa', 'ni', 'de', 'wo', 'kara', 'made', 'yori', 'mo', 'desu', 'masu', 'da', 'na', 'yo', 'ne', 'ka', 'suru', 'shite', 'iru', 'aru', 'nai', 'noda', 'ndesu', 'san', 'kun', 'chan', 'sama', 'senpai', 'kouhai', 'sensei', 'boku', 'ore', 'watashi', 'kimi', 'anata', 'omae', 'kisama', 'temee', 'ano', 'sono', 'kono', 'dono', 'kore', 'sore', 'are', 'dore', 'koko', 'soko', 'asoko', 'doko', 'kochira', 'sochira', 'achira', 'dochira']);
+    const roSeqs = /shi|tsu|chi|chu|sho|kya|kyu|kyo|ryo|ryu|gyo|gya|gyu|nya|nyu|nyo|sha|shu|sho|ja|ju|jo|cha|chu|cho|mya|myu|myo|rya|ryu|ryo|pya|pyu|pyo/g;
+
+    for (const w of words) {
+      if (enWords.has(w)) enScore += 2;
+      if (roWords.has(w)) roScore += 2;
+      if (/^[a-z]{3,}[aiueo]$/.test(w) && !enWords.has(w)) roScore += 0.5;
     }
+    
+    const seqMatches = s.toLowerCase().match(roSeqs);
+    if (seqMatches) roScore += seqMatches.length * 2;
+    
+    return enScore > roScore ? 'en' : (roScore > enScore ? 'ja-ro' : 'en');
   }
 
   // Pick the best title from a pipe-separated string based on language setting.
   // Sites like nhentai encode: "English Title | Japanese Title" or similar.
   function pickTitle(raw) {
     if (!raw) return '';
-    const parts = raw.split('|').map(s => s.trim()).filter(Boolean);
+    const parts = raw.split(/[|~]/).map(s => s.trim()).filter(Boolean);
     let picked;
+
     if (parts.length <= 1) {
       picked = raw.trim();
     } else {
-      const lang = settings.lang;
-      // Convention on most manga sites (nhentai, MangaDex, etc.):
-      //   [0] = original/native title  |  [last] = translated/English title
-      // So for English we prefer the LAST segment; for CJK we prefer the FIRST.
       const isCJK = s => /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(s);
       const isLatin = s => /^[\x00-\x7f\s\-'.,!?()[\]]+$/.test(s);
-      if (lang === 'en') {
-        // Last latin segment, falling back to the last segment overall
-        const latinParts = parts.filter(isLatin);
-        picked = latinParts.length ? latinParts[latinParts.length - 1] : parts[parts.length - 1];
-      } else if (lang === 'ja' || lang === 'zh' || lang === 'ko') {
-        // First CJK segment, falling back to first overall
-        picked = parts.find(isCJK) || parts[0];
-      } else if (lang === 'ja-ro') {
-        // First latin segment (romaji sits before the English translation on most sites)
-        picked = parts.find(isLatin) || parts[0];
+
+      // Classify all parts
+      const classified = parts.map(p => {
+        if (isCJK(p)) return { text: p, lang: 'ja' };
+        if (isLatin(p)) return { text: p, lang: guessLatinLanguage(p) };
+        return { text: p, lang: 'unknown' };
+      });
+
+      const prefLang = settings.lang || 'en';
+
+      if (prefLang === 'en') {
+        const enParts = classified.filter(c => c.lang === 'en');
+        picked = enParts.length ? enParts[enParts.length - 1].text : parts[parts.length - 1];
+      } else if (prefLang === 'ja' || prefLang === 'zh' || prefLang === 'ko') {
+        const jaParts = classified.filter(c => c.lang === 'ja');
+        picked = jaParts.length ? jaParts[0].text : parts[0];
+      } else if (prefLang === 'ja-ro') {
+        const roParts = classified.filter(c => c.lang === 'ja-ro');
+        picked = roParts.length ? roParts[0].text : (classified.find(c => c.lang === 'en')?.text || parts[0]);
       } else {
         picked = parts[0];
       }
     }
+
     // Strip metadata/status bracket tags commonly appended to doujin titles
     picked = picked
       .replace(/\s*\[(ongoing|completed?|end(ed)?|hiatus|dropped|english|digital|raw|translated?|decensored|uncensored|dl[- ]?ver?|digital)\]\s*/gi, ' ')
@@ -2593,15 +2559,23 @@
 
   function handleCardAuxClick(event, id) {
     if (event.button !== 1 || !settings.middleClickLink) return;
+    if (event.target.closest('a') || event.target.closest('button')) return;
     const entry = entries.find(e => e.id === id);
     if (!entry?.link) return;
     event.preventDefault();
     window.open(entry.link, '_blank', 'noopener,noreferrer');
   }
 
+  function handleCardMouseDown(event) {
+    if (event.button === 1 && settings.middleClickLink) {
+      if (event.target.closest('a') || event.target.closest('button')) return;
+      event.preventDefault();
+    }
+  }
+
   function renderList(filtered, container) {
     container.innerHTML = `<div class="entries-list">${filtered.map(e => `
-      <div class="entry-card" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')">
+      <div class="entry-card" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')" onmousedown="handleCardMouseDown(event)">
         <div class="entry-thumb-sm">${thumbHtml(e)}</div>
         <div class="entry-info">
           <div class="entry-title">${escHtml(e.title)}</div>
@@ -2624,13 +2598,19 @@
             <img class="site-logo" src="https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fencrypted-tbn0.gstatic.com%2Fimages%3Fq%3Dtbn%3AANd9GcQ8HPq8qdXYifvxu8XdsbuSiE4vjlLYw4k8kg%26s&f=1&nofb=1&ipt=67a46636722a9f680f9045b6fcaeeb7fe531f49d12494b4f03fd638bf1b31d08" onerror="this.style.display='none'" alt="MangaUpdates" style="border-radius:3px" />
             <span class="site-label">MangaUpd</span>
           </button>
+          ${!(e.link && (e.link.includes('nhentai.net') || /^\\d+$/.test(e.link))) ? `
+          <button class="btn-site" onclick="lookupOnSite('nhentai', ${escHtml(JSON.stringify(e.title))}, '${e.id}')" title="Lookup on NH">
+            <span class="site-logo" style="font-size:18px;display:flex;align-items:center;justify-content:center;background:#ED2553;color:white;border-radius:5px;font-weight:bold;padding-bottom:2px">N</span>
+            <span class="site-label">NHentai</span>
+          </button>
+          ` : ''}
         </div>
       </div>`).join('')}</div>`;
   }
 
   function renderCompact(filtered, container) {
     container.innerHTML = `<div class="entries-compact">${filtered.map(e => `
-      <div class="entry-compact-row" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')">
+      <div class="entry-compact-row" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')" onmousedown="handleCardMouseDown(event)">
         <div class="compact-title">${escHtml(e.title)}</div>
         <div class="compact-author">${e.author ? escHtml(e.author) : '<span style="color:var(--text-muted);font-style:italic">Unknown</span>'}</div>
         <div class="compact-status">${statusPill(e.status)}</div>
@@ -2640,7 +2620,7 @@
 
   function renderGrid(filtered, container) {
     container.innerHTML = `<div class="entries-grid">${filtered.map(e => `
-      <div class="entry-grid-card" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')">
+      <div class="entry-grid-card" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')" onmousedown="handleCardMouseDown(event)">
         <div class="entry-thumb-lg">
           ${thumbHtml(e, 'lg')}
           <span class="status-pill thumb-status s-${e.status}">${STATUS_LABELS[e.status]}</span>
@@ -2657,7 +2637,7 @@
 
   function renderLinks(filtered, container) {
     container.innerHTML = `<div class="entries-links">${filtered.map(e => `
-      <div class="entry-link-row" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')">
+      <div class="entry-link-row" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')" onmousedown="handleCardMouseDown(event)">
         ${statusPill(e.status)}
         <div class="link-main">
           <div class="link-title">
@@ -3779,12 +3759,70 @@
 
   async function lookupOnSite(site, title, entryId) {
     openLookupLog();
-    const siteName = site === 'anilist' ? 'AniList' : 'MangaUpdates';
+    const siteName = site === 'anilist' ? 'AniList' : site === 'mangaupdates' ? 'MangaUpdates' : 'NHentai';
     logLine(`🔍 "${title}" — ${siteName}`, 'info');
     logLine('⏳ Looking up…');
     try {
       let result = null;
-      if (site === 'anilist') {
+      if (site === 'nhentai') {
+        const e = entries.find(x => x.id === entryId);
+        if (!e) throw new Error('Entry not found');
+        
+        // 1. Extract titles
+        const allRawTitles = [e.title, ...(e.altTitles || [])].filter(Boolean);
+        const parts = [];
+        for (const t of allRawTitles) {
+            parts.push(...t.split(/[|~]/).map(s => s.trim()).filter(Boolean));
+        }
+        
+        const isCJK = s => /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(s);
+        const isLatin = s => /^[\x00-\x7f\s\-'.,!?()[\]]+$/.test(s);
+        
+        let enTitle = null, roTitle = null, jaTitle = null;
+        for (const p of parts) {
+            if (isCJK(p)) jaTitle = jaTitle || p;
+            else if (isLatin(p)) {
+                const lang = guessLatinLanguage(p);
+                if (lang === 'en') enTitle = enTitle || p;
+                else if (lang === 'ja-ro') roTitle = roTitle || p;
+            }
+        }
+        
+        // 2. Build queries in order of priority
+        const queries = [];
+        if (enTitle) queries.push(enTitle);
+        if (roTitle) queries.push(roTitle);
+        if (jaTitle) queries.push(jaTitle);
+        if (e.author) {
+            const authorQuery = `artist:"${e.author}"`;
+            // Add author tag along with the best title we have
+            const bestTitle = enTitle || roTitle || jaTitle || e.title;
+            queries.push(`${authorQuery} "${bestTitle}"`);
+            queries.push(authorQuery);
+        }
+        
+        if (queries.length === 0) queries.push(e.title);
+        
+        // 3. Search sequentially
+        for (const q of queries) {
+            logLine(`🔎 Query: ${q}`);
+            const searchResp = await fetch(`/api/nh/search?q=${encodeURIComponent(q)}`);
+            if (searchResp.ok) {
+                const json = await searchResp.json();
+                if (json.results && json.results.length > 0) {
+                    const r = json.results[0];
+                    result = {
+                        title: r.title,
+                        author: r.author,
+                        image: r.image,
+                        tags: r.tags,
+                        url: r.url
+                    };
+                    break;
+                }
+            }
+        }
+      } else if (site === 'anilist') {
         const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english}coverImage{large}staff(perPage:1){nodes{name{full}}}genres tags(sort:RANK_DESC){name rank}}}`;
         const res = await Promise.race([
           fetch('https://graphql.anilist.co', {
@@ -3833,23 +3871,52 @@
       if (result.author) logLine(`✍️ Author: ${result.author}`, 'ok');
       if (result.image) logLine('🖼️ Cover image found', 'ok');
       if (result.tags.length) logLine(`🏷️ Tags: ${result.tags.slice(0,6).join(', ')}${result.tags.length > 6 ? '…' : ''}`, 'ok');
+      
+      // If it's NHentai, inject a link log and save the URL.
+      if (site === 'nhentai' && result.url) {
+          logLine(`🔗 Link: <a href="${result.url}" target="_blank" style="color:var(--accent)">${result.url}</a>`, 'ok');
+      }
+      
       // Inject an Apply button into the log
       const applyBtn = document.createElement('button');
       applyBtn.className = 'btn btn-primary';
       applyBtn.style.cssText = 'margin-top:8px;font-size:0.78rem;padding:4px 14px';
       applyBtn.textContent = '➕ Apply to entry';
-      applyBtn.onclick = () => {
+      applyBtn.onclick = async () => {
         const entry = entries.find(x => x.id === entryId);
         if (!entry) return;
-        if (result.title) entry.title = result.title;
-        if (result.author) entry.author = result.author;
-        if (result.image) entry.thumb = result.image;
-        if (result.tags.length) entry.tags = [...new Set([...(entry.tags || []), ...result.tags])];
-        saveEntries();
-        renderEntries();
-        logLine('✅ Applied to entry!', 'ok');
-        applyBtn.disabled = true;
-        applyBtn.textContent = '✔ Applied';
+        let changes = [];
+        if (result.title && !entry.title) { entry.title = result.title; changes.push('Title'); }
+        if (result.author && !entry.author) { entry.author = result.author; changes.push('Author'); }
+        if (result.image && !entry.image) { entry.image = result.image; changes.push('Cover image'); }
+        if (site === 'nhentai' && result.url && !entry.link) {
+          entry.link = result.url;
+          changes.push('Link');
+        }
+        if (result.tags && result.tags.length) {
+          const current = new Set(entry.tags || []);
+          let added = 0;
+          for (const t of result.tags) {
+            if (!current.has(t)) {
+              current.add(t);
+              added++;
+            }
+          }
+          if (added > 0) {
+            entry.tags = [...current];
+            changes.push(`${added} tags`);
+          }
+        }
+        
+        if (changes.length > 0) {
+          await saveEntries();
+          renderEntries();
+          logLine(`✅ Applied: ${changes.join(', ')}`, 'ok');
+          applyBtn.style.display = 'none';
+        } else {
+          logLine('ℹ️ Entry already has all data.', 'info');
+          applyBtn.textContent = 'Already applied';
+        }
       };
       document.getElementById('lookupLogBody').appendChild(applyBtn);
     } catch(e) {
