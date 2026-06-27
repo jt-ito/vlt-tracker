@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Manga List</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
     :root {
       --bg: #0f0f13;
@@ -1438,6 +1439,10 @@
             <button class="btn-site" id="openMUBtn" onclick="lookupFromMangaUpdates()" title="Fetch tags from MangaUpdates">
               <img class="site-logo" src="https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fencrypted-tbn0.gstatic.com%2Fimages%3Fq%3Dtbn%3AANd9GcQ8HPq8qdXYifvxu8XdsbuSiE4vjlLYw4k8kg%26s&f=1&nofb=1&ipt=67a46636722a9f680f9045b6fcaeeb7fe531f49d12494b4f03fd638bf1b31d08" onerror="this.style.display='none'" alt="MangaUpdates" style="border-radius:3px" />
               <span class="site-label">MangaUpd</span>
+            </button>
+            <button class="btn-site" id="openNHBtn" onclick="lookupFromNH()" title="Fetch tags from NHentai">
+              <img class="site-logo" src="https://nhentai.net/favicon.ico" onerror="this.replaceWith('NH')" alt="NHentai" />
+              <span class="site-label">NHentai</span>
             </button>
             <button class="btn btn-ghost" id="lookupTagsBtn" onclick="lookupTags()" style="font-size:0.78rem;padding:3px 10px;height:56px;border-radius:12px">🔍<br><span style="font-size:0.6rem">Lookup<br>Tags</span></button>
           </div>
@@ -3128,6 +3133,7 @@
     let title = cleanStr(doc.querySelector('span.pretty')?.textContent)
       || cleanStr(doc.querySelector('h1#gallery-brand a')?.textContent)  // hitomi.la
       || cleanStr(doc.querySelector('#info-block #info h1')?.textContent)  // hentaikisu.com
+      || (doc.title.endsWith('- HDW') || doc.title.includes('HDW') ? cleanStr(doc.querySelector('.post-title h1')?.textContent) : '') // hentaidoujinworld
       || getMeta('og:title', 'twitter:title')  // server-set, page-specific — preferred over DOM scraping (avoids trending-section h1s on Madara/WordPress sites)
       || cleanStr(doc.querySelector('article .post-title h1')?.textContent)  // Madara theme fallback
       || cleanStr(doc.querySelector('.post-title h1, .post-title')?.textContent)
@@ -3146,7 +3152,8 @@
       if (title.endsWith(suffix)) { title = title.slice(0, -suffix.length).trim(); break; }
     }
     // Strip freestanding translation notes anywhere in the title
-    title = title.replace(/\s*\btranslated in english\b\s*/gi, ' ').trim();
+    title = title.replace(/\s*\btranslated in english\b\s*/gi, ' ')
+                 .replace(/\s*\bMTL\b/g, ' ').trim();
     // Extract author from title brackets — ONLY a bracket at the very START is used as the
     // author candidate (e.g. "[Stormfeder] 7TH Heaven"). End brackets are stripped unconditionally
     // because they are typically labels ([English], [Digital]) or uploader tags ([Xzosk]),
@@ -3754,6 +3761,92 @@
       if (!pickedTitle && !author && !image && !tags.length) logLine('⚠️ No data found', 'err');
     } catch(e) {
       logLine('❌ MangaUpdates error: ' + e.message, 'err');
+    }
+  }
+
+  async function lookupFromNH() {
+    const title = document.getElementById('fTitle').value.trim();
+    if (!title) { document.getElementById('fTitle').focus(); return; }
+    
+    const authorStr = document.getElementById('fAuthor').value.trim();
+
+    openLookupLog();
+    logLine(`🔍 "${title}" — NHentai`, 'info');
+    logLine('⏳ Querying NHentai…');
+    try {
+      const allRawTitles = [title, ...altTitlesState].filter(Boolean);
+      const parts = [];
+      for (const t of allRawTitles) {
+        parts.push(...t.split(/[|~]/).map(s => s.trim()).filter(Boolean));
+      }
+      
+      const isCJK = s => /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(s);
+      const isLatin = s => /^[\x00-\x7f\s\-'.,!?()[\]]+$/.test(s);
+      
+      let enTitle = null, roTitle = null, jaTitle = null;
+      for (const p of parts) {
+          if (isCJK(p)) jaTitle = jaTitle || p;
+          else if (isLatin(p)) {
+              const lang = guessLatinLanguage(p);
+              if (lang === 'en') enTitle = enTitle || p;
+              else if (lang === 'ja-ro') roTitle = roTitle || p;
+          }
+      }
+      
+      const queries = [];
+      const bestTitle = enTitle || roTitle || jaTitle || title;
+
+      if (authorStr) {
+          const firstAuthor = authorStr.split(',')[0].trim();
+          const authorQuery = `artist:"${firstAuthor}"`;
+          
+          queries.push(`${authorQuery} "${bestTitle}"`);
+          
+          const words = bestTitle.split(/\s+/).filter(w => w.length > 2);
+          for (const word of words) {
+              queries.push(`${authorQuery} "${word}"`);
+          }
+          queries.push(authorQuery);
+      }
+      
+      if (enTitle) queries.push(enTitle);
+      if (roTitle) queries.push(roTitle);
+      if (jaTitle) queries.push(jaTitle);
+      if (queries.length === 0 || !queries.includes(title)) queries.push(title);
+      
+      const uniqueQueries = [...new Set(queries)];
+      
+      let finalResult = null;
+      for (const q of uniqueQueries) {
+          logLine(`🔎 Query: ${q}`);
+          const res = await fetch(`/api/nh/search?q=${encodeURIComponent(q)}`);
+          if (res.ok) {
+              const json = await res.json();
+              if (json.results && json.results.length > 0) {
+                  finalResult = json.results[0];
+                  break;
+              }
+          }
+      }
+
+      if (!finalResult) {
+        logLine('⚠️ No data found', 'err');
+        return;
+      }
+      
+      const r = finalResult;
+      if (r.title) { document.getElementById('fTitle').value = r.title; logLine(`📝 Title: ${r.title}`, 'ok'); }
+      if (r.author) { document.getElementById('fAuthor').value = r.author; logLine(`✍️ Author: ${r.author}`, 'ok'); }
+      if (r.image) { document.getElementById('fThumb').value = r.image; previewThumb(); logLine('🖼️ Cover image updated', 'ok'); }
+      if (r.tags && r.tags.length) {
+        const existing = document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean);
+        const merged = [...new Set([...existing, ...r.tags])];
+        document.getElementById('fTags').value = merged.join(', ');
+        renderTagsPreview();
+        logLine(`🏷️ ${r.tags.length} tags applied`, 'ok');
+      }
+    } catch(e) {
+      logLine('❌ NHentai error: ' + e.message, 'err');
     }
   }
 

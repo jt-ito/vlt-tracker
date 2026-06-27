@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=deps /app/node_modules ./node_modules
 
 # Copy app source (no Electron files needed for web mode)
-COPY index.html server.js login.html ./
+COPY index.html server.js login.html favicon.svg ./
 COPY extensions/ ./extensions/
 
 EXPOSE 3000
