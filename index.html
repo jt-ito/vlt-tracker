@@ -2111,7 +2111,7 @@
   // Sites like nhentai encode: "English Title | Japanese Title" or similar.
   function pickTitle(raw) {
     if (!raw) return '';
-    const parts = raw.split(/[|~]/).map(s => s.trim()).filter(Boolean);
+    const parts = raw.split(/[|]/).map(s => s.trim()).filter(Boolean);
     let picked;
 
     if (parts.length <= 1) {
@@ -3865,7 +3865,7 @@
         const allRawTitles = [e.title, ...(e.altTitles || [])].filter(Boolean);
         const parts = [];
         for (const t of allRawTitles) {
-            parts.push(...t.split(/[|~]/).map(s => s.trim()).filter(Boolean));
+            parts.push(...t.split(/[|]/).map(s => s.trim()).filter(Boolean));
         }
         
         const isCJK = s => /[\u3000-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(s);
@@ -4346,6 +4346,7 @@
             chaptersRead: null, chaptersTotal: null,
             volumesRead: null, volumesTotal: null,
             tags: result.tags || [],
+            altTitles: result.altTitles || [],
             dateAdded: Date.now(),
           };
           entries.push(entry);
@@ -4435,6 +4436,18 @@
   // Record where each mousedown starts so backdrop click handlers can tell
   // whether the click was a genuine outside-click or the end of a text-selection drag.
   document.addEventListener('mousedown', e => { _backdropMousedownTarget = e.target; });
+  document.getElementById('batchUrls').addEventListener('paste', function(e) {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData('text');
+    if (!text) return;
+    const textToInsert = text.endsWith('\n') ? text : text + '\n';
+    if (!document.execCommand('insertText', false, textToInsert)) {
+      const start = this.selectionStart;
+      const end = this.selectionEnd;
+      this.value = this.value.substring(0, start) + textToInsert + this.value.substring(end);
+      this.selectionStart = this.selectionEnd = start + textToInsert.length;
+    }
+  });
   init();
 </script>
 
