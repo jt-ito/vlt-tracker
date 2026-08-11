@@ -12,10 +12,8 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-2019, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      GYP_MSVS_VERSION: "2022"
     
     steps:
       - name: Checkout Repository
