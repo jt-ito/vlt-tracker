@@ -10,7 +10,10 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     
     steps:
       - name: Checkout Repository
@@ -25,7 +28,27 @@ jobs:
       - name: Install Dependencies
         run: npm ci
         
-      - name: Build and Publish Releases
+      - name: Build and Publish Electron Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder --publish always
+
+      - name: Create Linux CLI Bundle
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p vlt-tracker-cli
+          cp server.js index.html login.html favicon.svg package.json vlt-tracker-cli/
+          cp -r extensions vlt-tracker-cli/
+          cp -r node_modules vlt-tracker-cli/
+          echo '#!/bin/bash' > vlt-tracker-cli/vlt-tracker.sh
+          echo 'cd "$(dirname "$0")"' >> vlt-tracker-cli/vlt-tracker.sh
+          echo 'node server.js "$@"' >> vlt-tracker-cli/vlt-tracker.sh
+          chmod +x vlt-tracker-cli/vlt-tracker.sh
+          tar -czf vlt-tracker-linux-cli.tar.gz vlt-tracker-cli/
+        shell: bash
+        
+      - name: Upload Linux CLI Bundle
+        if: matrix.os == 'ubuntu-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vlt-tracker-linux-cli.tar.gz
