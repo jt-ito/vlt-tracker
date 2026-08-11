@@ -7,30 +7,76 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
     :root {
-      --bg: #0f0f13;
-      --surface: #1a1a24;
-      --surface2: #22222f;
-      --surface3: #2a2a3a;
-      --accent: #7c6af7;
-      --accent2: #a78bfa;
-      --accent-glow: rgba(124, 106, 247, 0.25);
-      --text: #e8e8f0;
-      --text-muted: #8888aa;
-      --border: #333348;
-      --reading: #22c55e;
-      --planning: #3b82f6;
-      --dropped: #ef4444;
-      --completed: #a78bfa;
-      --paused: #f59e0b;
-      --rereading: #06b6d4;
+      color-scheme: dark;
+
+      /* 60% Dominant (Dark Backgrounds) */
+      --bg: oklch(14% 0.012 260);
+      
+      /* 30% Secondary (Surfaces) */
+      --surface: oklch(19% 0.02 260);
+      --surface2: oklch(23% 0.025 260);
+      --surface3: oklch(28% 0.03 260);
+      --surface-hover: oklch(21% 0.022 260);
+      --border: oklch(28% 0.03 260);
+
+      /* 10% Accent */
+      --accent: oklch(72% 0.22 280);
+      --accent-hover: oklch(78% 0.22 280);
+      --accent-glow: oklch(72% 0.22 280 / 0.15);
+
+      /* Text & Contrast */
+      --text: oklch(95% 0.01 260);
+      --text-muted: oklch(72% 0.02 260);
+
+      /* Status Tokens */
+      --reading: oklch(75% 0.16 150);
+      --planning: oklch(75% 0.16 260);
+      --dropped: oklch(68% 0.20 20);
+      --completed: oklch(75% 0.18 300);
+      --paused: oklch(80% 0.15 70);
+      --rereading: oklch(75% 0.14 190);
+      --danger: oklch(68% 0.20 20);
+
       --radius: 12px;
       --radius-sm: 8px;
+    }
+
+    [data-theme="light"] {
+      color-scheme: light;
+
+      /* 60% Dominant (Light Backgrounds) */
+      --bg: oklch(98% 0.005 260);
+      
+      /* 30% Secondary (Surfaces) */
+      --surface: oklch(100% 0 0);
+      --surface2: oklch(96% 0.01 260);
+      --surface3: oklch(92% 0.015 260);
+      --surface-hover: oklch(97% 0.008 260);
+      --border: oklch(88% 0.02 260);
+
+      /* 10% Accent (Lowered lightness for AA contrast) */
+      --accent: oklch(50% 0.22 280);
+      --accent-hover: oklch(45% 0.22 280);
+      --accent-glow: oklch(50% 0.22 280 / 0.12);
+
+      /* Text & Contrast */
+      --text: oklch(18% 0.015 260);
+      --text-muted: oklch(48% 0.02 260);
+
+      /* Status Tokens */
+      --reading: oklch(45% 0.18 150);
+      --planning: oklch(45% 0.18 260);
+      --dropped: oklch(50% 0.22 20);
+      --completed: oklch(48% 0.20 300);
+      --paused: oklch(52% 0.18 70);
+      --rereading: oklch(45% 0.16 190);
+      --danger: oklch(50% 0.22 20);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
@@ -54,11 +100,11 @@
     .logo {
       font-size: 1.4rem;
       font-weight: 700;
-      background: linear-gradient(135deg, var(--accent), var(--accent2));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      color: var(--text);
       letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     .header-actions {
@@ -85,14 +131,14 @@
       background: var(--accent);
       color: #fff;
     }
-    .btn-primary:hover { background: #6b5ae0; box-shadow: 0 0 16px var(--accent-glow); }
+    .btn-primary:hover { background: color-mix(in oklab, var(--accent), black 8%); box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25); }
 
     .btn-ghost {
       background: transparent;
       color: var(--text-muted);
       border: 1px solid var(--border);
     }
-    .btn-ghost:hover { background: var(--surface2); color: var(--text); }
+    .btn-ghost:hover { background: var(--surface-hover); color: var(--text); }
 
     .btn-icon {
       padding: 8px;
@@ -105,7 +151,7 @@
       font-size: 1rem;
       line-height: 1;
     }
-    .btn-icon:hover { background: var(--surface2); color: var(--text); }
+    .btn-icon:hover { background: var(--surface-hover); color: var(--text); }
     .btn-icon.active {
       background: var(--accent);
       color: #fff;
@@ -155,8 +201,8 @@
       justify-content: space-between;
       gap: 8px;
     }
-    .filter-btn:hover { background: var(--surface2); color: var(--text); }
-    .filter-btn.active { background: var(--accent-glow); color: var(--accent2); font-weight: 600; }
+    .filter-btn:hover { background: var(--surface-hover); color: var(--text); }
+    .filter-btn.active { background: rgba(79, 70, 229, 0.1); color: var(--accent-hover); font-weight: 600; }
 
     .filter-left { display: flex; align-items: center; gap: 8px; }
 
@@ -233,7 +279,7 @@
       border-radius: 50%;
       display: none;
     }
-    .search-clear:hover { color: var(--text); background: var(--surface2); }
+    .search-clear:hover { color: var(--text); background: var(--surface-hover); }
     .search-wrap.has-value .search-clear { display: block; }
 
     .view-toggles { display: flex; gap: 4px; }
@@ -242,6 +288,7 @@
     .tag-filter-btn {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 5px;
       padding: 7px 11px;
       border-radius: var(--radius-sm);
@@ -253,7 +300,7 @@
       white-space: nowrap;
       transition: border-color 0.15s, color 0.15s;
     }
-    .tag-filter-btn:hover, .tag-filter-btn.active { border-color: var(--accent); color: var(--accent2); }
+    .tag-filter-btn:hover, .tag-filter-btn.active { border-color: var(--accent); color: var(--accent-hover); }
     .tag-filter-btn .tf-badge {
       background: var(--accent);
       color: #fff;
@@ -288,7 +335,7 @@
       user-select: none;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
     }
-    .tf-pill:hover { border-color: var(--accent); color: var(--accent2); }
+    .tf-pill:hover { border-color: var(--accent); color: var(--accent-hover); }
     .tf-pill.include {
       background: rgba(74,222,128,0.15);
       border-color: #4ade80;
@@ -330,7 +377,7 @@
     }
     .entry-card:hover {
       border-color: var(--accent);
-      box-shadow: 0 0 12px var(--accent-glow);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
     }
 
     .entry-thumb-sm {
@@ -398,7 +445,7 @@
 
     .entry-link {
       font-size: 0.75rem;
-      color: var(--accent2);
+      color: var(--accent-hover);
       text-decoration: none;
       white-space: nowrap;
       overflow: hidden;
@@ -434,7 +481,7 @@
       padding: 0;
       transition: border-color 0.15s, color 0.15s, background 0.15s;
     }
-    .btn-site:hover { border-color: var(--accent); color: var(--accent2); background: rgba(124,106,247,0.08); }
+    .btn-site:hover { border-color: var(--accent); color: var(--accent-hover); background: rgba(79, 70, 229, 0.08); }
     .btn-site .site-logo {
       width: 26px;
       height: 26px;
@@ -503,7 +550,7 @@
     .log-line { color: var(--text-muted); }
     .log-line.ok  { color: #4ade80; }
     .log-line.err { color: #f87171; }
-    .log-line.info { color: var(--accent2); font-weight: 600; }
+    .log-line.info { color: var(--accent-hover); font-weight: 600; }
 
     /* ── Grid / Thumbnail views ── */
     .entries-grid {
@@ -603,7 +650,7 @@
       color: var(--text);
       text-decoration: none;
     }
-    .link-title a:hover { color: var(--accent2); text-decoration: underline; }
+    .link-title a:hover { color: var(--accent-hover); text-decoration: underline; }
 
     .link-url {
       display: block;
@@ -615,7 +662,7 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .link-url:hover { color: var(--accent2); text-decoration: underline; }
+    .link-url:hover { color: var(--accent-hover); text-decoration: underline; }
 
     .no-link { color: var(--text-muted); font-style: italic; font-size: 0.8rem; }
 
@@ -642,7 +689,7 @@
     }
     .batch-progress-fill {
       height: 100%;
-      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      background: linear-gradient(90deg, var(--accent), var(--accent-hover));
       border-radius: 99px;
       transition: width 0.3s;
       width: 0%;
@@ -863,12 +910,12 @@
     }
 
     /* ── Status colors ── */
-    .s-reading    { background: rgba(34,197,94,0.15); color: var(--reading); }
-    .s-planning   { background: rgba(59,130,246,0.15); color: var(--planning); text-shadow: 0 0 2px #fff, 0 0 2px #fff; }
-    .s-dropped    { background: rgba(239,68,68,0.15);  color: var(--dropped); }
-    .s-completed  { background: rgba(167,139,250,0.15);color: var(--completed); }
-    .s-paused     { background: rgba(245,158,11,0.15); color: var(--paused); }
-    .s-rereading  { background: rgba(6,182,212,0.15);  color: var(--rereading); }
+    .s-reading    { background: rgba(22, 163, 74, 0.12); color: var(--reading); }
+    .s-planning   { background: rgba(37, 99, 235, 0.12); color: var(--planning); }
+    .s-dropped    { background: rgba(220, 38, 38, 0.12); color: var(--dropped); }
+    .s-completed  { background: rgba(124, 58, 237, 0.12); color: var(--completed); }
+    .s-paused     { background: rgba(217, 119, 6, 0.12); color: var(--paused); }
+    .s-rereading  { background: rgba(8, 145, 178, 0.12); color: var(--rereading); }
 
     /* dot colors */
     .d-reading   { background: var(--reading); }
@@ -891,8 +938,8 @@
     }
 
     /* Delete confirmation */
-    .danger { color: #ef4444; border-color: #ef4444; }
-    .danger:hover { background: rgba(239,68,68,0.1); }
+    .danger { color: var(--danger); border-color: var(--danger); }
+    .danger:hover { background: rgba(220, 38, 38, 0.08); }
 
     /* Notes preview in card */
     .notes-preview {
@@ -912,9 +959,9 @@
       font-size: 0.67rem;
       padding: 2px 8px;
       border-radius: 20px;
-      background: rgba(139,92,246,0.12);
-      color: #a78bfa;
-      border: 1px solid rgba(139,92,246,0.25);
+      background: rgba(79, 70, 229, 0.08);
+      color: var(--accent-hover);
+      border: 1px solid rgba(79, 70, 229, 0.2);
       white-space: nowrap;
     }
     .entry-tags {
@@ -943,9 +990,9 @@
       font-size: 0.67rem;
       padding: 2px 6px 2px 8px;
       border-radius: 20px;
-      background: rgba(139,92,246,0.12);
-      color: #a78bfa;
-      border: 1px solid rgba(139,92,246,0.25);
+      background: rgba(79, 70, 229, 0.08);
+      color: var(--accent-hover);
+      border: 1px solid rgba(79, 70, 229, 0.2);
       white-space: nowrap;
       cursor: default;
     }
@@ -985,7 +1032,7 @@
       font-size: 1rem;
       transition: background 0.2s;
     }
-    .split-arrow:hover { background: #6b5ae0; box-shadow: 0 0 16px var(--accent-glow); }
+    .split-arrow:hover { background: color-mix(in oklab, var(--accent), black 8%); box-shadow: 0 2px 8px rgba(79, 70, 229, 0.25); }
 
     .import-dropdown {
       position: absolute;
@@ -1289,7 +1336,8 @@
 
       <div class="tag-filter-wrap" id="tagFilterWrap">
         <button class="tag-filter-btn" id="tagFilterBtn" onclick="toggleTagFilterPanel()" title="Filter by tag/genre">
-          🏷 Filter
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-top: 1px;"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
+          Filter
           <span class="tf-badge hidden" id="tagFilterBadge">0</span>
         </button>
       </div>
@@ -1538,7 +1586,7 @@
         </div>
         <p style="font-size:0.75rem;color:var(--text-muted);margin-top:10px;line-height:1.5">
           Tip: paste a <code style="background:var(--surface3);padding:1px 5px;border-radius:3px">.json</code> export to restore a backup instantly without re-scraping &mdash;
-          <label style="cursor:pointer;color:var(--accent2);text-decoration:underline">
+          <label style="cursor:pointer;color:var(--accent-hover);text-decoration:underline">
             or load a file
             <input type="file" id="batchFileInput" accept=".json,.txt" style="display:none" onchange="batchLoadFile(this)" />
           </label>
@@ -1567,6 +1615,20 @@
       <button class="modal-close" onclick="closeSettings()">&#x2715;</button>
     </div>
     <div class="modal-body">
+
+      <div class="settings-section">
+        <div class="settings-section-title">Appearance</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Light Theme</div>
+            <div class="settings-desc">Enable the light theme interface.</div>
+          </div>
+          <label class="toggle" title="Toggle light theme">
+            <input type="checkbox" id="settingLightTheme" onchange="saveSettings()" />
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+      </div>
 
       <div class="settings-section">
         <div class="settings-section-title">Import Preferences</div>
@@ -1744,7 +1806,7 @@
   }
 
   // ── Settings ──
-  const DEFAULT_SETTINGS = { lang: 'en', cacheImages: true, showLinks: true };
+  const DEFAULT_SETTINGS = { lang: 'en', cacheImages: true, showLinks: true, lightTheme: false };
   let settings = { ...DEFAULT_SETTINGS };
 
   // ── Image Cache (IndexedDB) ────────────────────────────────────────
@@ -1902,12 +1964,22 @@
     updateCacheInfo();
   }
 
+  function applyTheme() {
+    if (settings.lightTheme) {
+      document.documentElement.setAttribute('data-theme', 'light');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+  }
+
   function saveSettings() {
     settings.lang = document.getElementById('settingLang').value;
     settings.cacheImages = document.getElementById('settingCacheImages').checked;
     settings.showLinks = document.getElementById('settingShowLinks').checked;
     settings.middleClickLink = document.getElementById('settingMiddleClickLink').checked;
+    settings.lightTheme = document.getElementById('settingLightTheme').checked;
     localStorage.setItem(storeKey('mangaSettings'), JSON.stringify(settings));
+    applyTheme();
     renderEntries();
   }
   function openSettings() {
@@ -1915,6 +1987,7 @@
     document.getElementById('settingCacheImages').checked = !!settings.cacheImages;
     document.getElementById('settingShowLinks').checked = settings.showLinks !== false;
     document.getElementById('settingMiddleClickLink').checked = !!settings.middleClickLink;
+    document.getElementById('settingLightTheme').checked = !!settings.lightTheme;
     updateCacheInfo();
     loadNhKeyField();
     if (currentUser.isAdmin) loadAccountsList();
@@ -1979,7 +2052,7 @@
         <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border)">
           <span style="font-size:0.88rem;color:var(--text)">
             ${escHtml(u.username)}
-            ${u.isAdmin ? '<span style="font-size:0.72rem;color:var(--accent2);margin-left:6px">admin</span>' : ''}
+            ${u.isAdmin ? '<span style="font-size:0.72rem;color:var(--accent-hover);margin-left:6px">admin</span>' : ''}
           </span>
           ${u.id !== currentUser.id
             ? `<button class="btn btn-ghost" style="font-size:0.78rem;padding:3px 8px;color:var(--danger);flex-shrink:0"
@@ -2148,6 +2221,7 @@
       .replace(/\s*\[(ongoing|completed?|end(ed)?|hiatus|dropped|english|digital|raw|translated?|decensored|uncensored|dl[- ]?ver?|digital)\]\s*/gi, ' ')
       .replace(/\s*=+[^=]+=+\s*/g, ' ')   // =TranslatorGroup= credits
       .replace(/\s{2,}/g, ' ')
+      .replace(/\s+[.,;:-]+\s*$/, '')     // Strip trailing punctuation like ' .'
       .trim();
     return picked;
   }
@@ -2698,7 +2772,14 @@
     document.getElementById('importUrl').value = url;
     scrapeUrl();
   }
-  document.addEventListener('click', () => closeImportMenu());
+  document.addEventListener('click', e => {
+    closeImportMenu();
+    const tagWrap = document.getElementById('tagFilterWrap');
+    if (tagWrap && !tagWrap.contains(e.target)) {
+      const panel = document.getElementById('tagFilterPanel');
+      if (panel) panel.classList.add('hidden');
+    }
+  });
 
   // ── Import Modal ──
   function openImportModal() {
@@ -2835,10 +2916,21 @@
     // Pick title by language preference
     const langMap = { 'en': 'en', 'ja-ro': 'ja-ro', 'ja': 'ja', 'zh': 'zh', 'ko': 'ko', 'original': null };
     const prefLang = langMap[settings.lang] || 'en';
-    const rawTitle = (prefLang && attrs.title[prefLang])
-      || attrs.title.en
-      || attrs.title['ja-ro']
-      || Object.values(attrs.title)[0] || '';
+    
+    const getTitleByLang = (lang) => {
+      if (!lang) return null;
+      if (attrs.title && attrs.title[lang]) return attrs.title[lang];
+      if (attrs.altTitles && Array.isArray(attrs.altTitles)) {
+        const alt = attrs.altTitles.find(t => t[lang]);
+        if (alt) return alt[lang];
+      }
+      return null;
+    };
+
+    const rawTitle = getTitleByLang(prefLang)
+      || getTitleByLang('en')
+      || getTitleByLang('ja-ro')
+      || Object.values(attrs.title || {})[0] || '';
     const title = pickTitle(rawTitle);
     const authorRel = data.relationships.find(r => r.type === 'author');
     const author = authorRel?.attributes?.name || '';
@@ -4408,6 +4500,7 @@
 
       entries  = JSON.parse(localStorage.getItem(storeKey('mangaEntries'))    || '[]');
       settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(storeKey('mangaSettings')) || '{}') };
+      applyTheme();
 
       // Restore saved view preference (defaults to 'grid' if never changed)
       const savedView = localStorage.getItem(storeKey('mangaView'));
