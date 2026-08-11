@@ -1,9 +1,9 @@
 {
   "name": "vlt-tracker",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "VLT Tracker — a local manga/doujin library tracker with import, tagging, and API integrations",
   "main": "main.js",
-  "author": "jt-ito",
+  "author": "jt-ito <jt-ito@users.noreply.github.com>",
   "repository": "jt-ito/vlt-tracker",
   "license": "MIT",
   "scripts": {
