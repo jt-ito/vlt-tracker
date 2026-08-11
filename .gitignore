@@ -11,3 +11,5 @@ data/
 !package-lock.json
 .DS_Store
 Thumbs.db
+
+.agents/
