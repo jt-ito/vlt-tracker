@@ -36,6 +36,7 @@ jobs:
       - name: Build and Publish Electron Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
         run: npx electron-builder --publish always
 
       - name: Create Linux CLI Bundle
