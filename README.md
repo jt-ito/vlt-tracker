@@ -32,7 +32,7 @@ VLT Tracker runs either as a **desktop app** (Electron) or a **self-hosted web s
 ### 🔒 Security & Privacy
 - **Authentication** — bcrypt-hashed accounts with rolling 15-minute sessions; brute-force protection via rate limiting (10 attempts per 15 min per IP)
 - **Multi-account support** — the first account you create is the admin; admins can create and delete additional accounts so different lists can have different logins
-- **Per-account isolated data** — each account's library is stored independently in `localStorage` (namespaced by user ID), so accounts don't bleed into each other
+- **Per-account isolated data** — each account's library, settings, and view preferences are stored server-side in SQLite (and cached locally in `localStorage`), so your library follows your account seamlessly across different browsers and devices
 - **Server-side API key storage** — NH and MangaDex keys are encrypted with AES-256-GCM server-side using a per-user derived key; the plaintext *never* leaves the server after saving, and never touches `localStorage`
 - **Helmet & HTTPS-first** — security headers out of the box; HTTP requests are redirected to HTTPS by default (`VLT_HTTPS=false` to disable for local dev)
 - **Session cookies** — `HttpOnly`, `SameSite=Strict`, optional `Secure` flag

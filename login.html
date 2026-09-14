@@ -277,7 +277,7 @@
         <label for="password">Password</label>
         <div class="pw-wrap">
           <input type="password" id="password" name="password"
-                 autocomplete="current-password" required maxlength="128"
+                 autocomplete="current-password" required maxlength="72"
                  placeholder="••••••••" />
           <button type="button" class="eye-btn" id="eyeBtn"
                   onclick="togglePw()" aria-label="Toggle password visibility">👁</button>
@@ -287,7 +287,7 @@
         <label for="confirmPassword">Confirm Password</label>
         <div class="pw-wrap">
           <input type="password" id="confirmPassword" name="confirm"
-                 autocomplete="new-password" maxlength="128"
+                 autocomplete="new-password" maxlength="72"
                  placeholder="••••••••" />
         </div>
       </div>
@@ -352,8 +352,8 @@
           btn.disabled = false;
           return;
         }
-        if (password.length < 8) {
-          errEl.textContent = 'Password must be at least 8 characters.';
+        if (password.length < 8 || password.length > 72) {
+          errEl.textContent = 'Password must be between 8 and 72 characters.';
           errEl.classList.add('visible');
           btn.disabled = false;
           return;

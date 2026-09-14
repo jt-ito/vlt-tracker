@@ -1979,6 +1979,7 @@
     settings.middleClickLink = document.getElementById('settingMiddleClickLink').checked;
     settings.lightTheme = document.getElementById('settingLightTheme').checked;
     localStorage.setItem(storeKey('mangaSettings'), JSON.stringify(settings));
+    scheduleSyncToServer({ settings });
     applyTheme();
     renderEntries();
   }
@@ -2096,7 +2097,7 @@
   }
 
   async function deleteAccount(id, username) {
-    if (!confirm(`Delete account "${username}"? Their library data in this browser will remain in localStorage but the account will no longer be able to log in.`)) return;
+    if (!confirm(`Delete account "${username}" and all their saved library data? This cannot be undone.`)) return;
     try {
       const r = await fetch(`/api/auth/users/${id}`, { method: 'DELETE' });
       if (r.ok) loadAccountsList();
@@ -2242,9 +2243,54 @@
     dropped: 'Dropped',
   };
 
+  // ── Server Sync ──
+  let _syncTimer = null;
+  let _pendingSync = null;
+
+  function scheduleSyncToServer(payload) {
+    _pendingSync = { ...(_pendingSync || {}), ...payload };
+    if (_syncTimer) clearTimeout(_syncTimer);
+    _syncTimer = setTimeout(flushSyncToServer, 400);
+  }
+
+  async function flushSyncToServer() {
+    if (_syncTimer) {
+      clearTimeout(_syncTimer);
+      _syncTimer = null;
+    }
+    if (!_pendingSync || !currentUser.id) return;
+    const body = _pendingSync;
+    _pendingSync = null;
+    try {
+      await fetch('/api/data', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        keepalive: true,
+      });
+    } catch (_) {
+      // Re-queue on network error
+      _pendingSync = { ...body, ...(_pendingSync || {}) };
+    }
+  }
+
+  window.addEventListener('beforeunload', () => {
+    if (_pendingSync && currentUser.id) {
+      try {
+        fetch('/api/data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(_pendingSync),
+          keepalive: true,
+        });
+      } catch (_) {}
+    }
+  });
+
   // ── Persistence ──
   function save() {
     localStorage.setItem(storeKey('mangaEntries'), JSON.stringify(entries));
+    scheduleSyncToServer({ entries });
   }
 
   // ── Filters / Sort ──
@@ -2265,6 +2311,7 @@
   function setView(view, btn) {
     currentView = view;
     localStorage.setItem(storeKey('mangaView'), view);
+    scheduleSyncToServer({ view });
     document.querySelectorAll('.view-toggles .btn-icon').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     renderEntries();
@@ -2474,11 +2521,19 @@
 
   // ── Helpers ──
   function escHtml(str) {
-    return String(str)
+    return String(str ?? '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function safeHref(url) {
+    if (!url || typeof url !== 'string') return '#';
+    const trimmed = url.trim();
+    if (/^https?:\/\//i.test(trimmed)) return escHtml(trimmed);
+    return '#';
   }
 
   function progressLabel(entry) {
@@ -2663,7 +2718,7 @@
           <div class="entry-meta">
             ${statusPill(e.status)}
             ${progressLabel(e) ? `<span class="progress-text">${progressLabel(e)}</span>` : ''}
-            ${settings.showLinks !== false && e.link ? `<a class="entry-link" href="${escHtml(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.link)}</a>` : ''}
+            ${settings.showLinks !== false && e.link ? `<a class="entry-link" href="${safeHref(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.link)}</a>` : ''}
           </div>
           ${e.notes ? `<div class="notes-preview">💬 ${escHtml(e.notes)}</div>` : ''}
           ${e.tags?.length ? `<div class="entry-tags">${e.tags.slice(0,8).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('')}</div>` : ''}
@@ -2721,12 +2776,12 @@
         <div class="link-main">
           <div class="link-title">
             ${e.link
-              ? `<a href="${escHtml(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.title)}</a>`
+              ? `<a href="${safeHref(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.title)}</a>`
               : escHtml(e.title)
             }
           </div>
           ${e.link
-            ? `<a class="link-url" href="${escHtml(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.link)}</a>`
+            ? `<a class="link-url" href="${safeHref(e.link)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${escHtml(e.link)}</a>`
             : `<span class="no-link">No link</span>`
           }
         </div>
@@ -4498,16 +4553,82 @@
         }
       }
 
-      entries  = JSON.parse(localStorage.getItem(storeKey('mangaEntries'))    || '[]');
-      settings = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(storeKey('mangaSettings')) || '{}') };
+      // Check local storage
+      let localEntries = null;
+      let localSettings = null;
+      try {
+        const raw = localStorage.getItem(storeKey('mangaEntries'));
+        if (raw) localEntries = JSON.parse(raw);
+      } catch (_) {}
+      try {
+        const raw = localStorage.getItem(storeKey('mangaSettings'));
+        if (raw) localSettings = JSON.parse(raw);
+      } catch (_) {}
+      const localView = localStorage.getItem(storeKey('mangaView')) || null;
+
+      // Fetch from server
+      let serverData = null;
+      try {
+        const sr = await fetch('/api/data');
+        if (sr.ok) {
+          serverData = await sr.json();
+        }
+      } catch (_) {}
+
+      if (serverData) {
+        const serverHasEntries = Array.isArray(serverData.entries) && serverData.entries.length > 0;
+        const localHasEntries = Array.isArray(localEntries) && localEntries.length > 0;
+
+        if (serverHasEntries) {
+          // Server is source of truth
+          entries = serverData.entries;
+          localStorage.setItem(storeKey('mangaEntries'), JSON.stringify(entries));
+
+          if (serverData.settings && Object.keys(serverData.settings).length > 0) {
+            settings = { ...DEFAULT_SETTINGS, ...serverData.settings };
+            localStorage.setItem(storeKey('mangaSettings'), JSON.stringify(settings));
+          } else if (localSettings) {
+            settings = { ...DEFAULT_SETTINGS, ...localSettings };
+          }
+
+          if (serverData.view) {
+            currentView = serverData.view;
+            localStorage.setItem(storeKey('mangaView'), currentView);
+          } else if (localView) {
+            currentView = localView;
+          }
+        } else if (localHasEntries) {
+          // Server has no entries, but this browser does -> auto-migrate to server!
+          entries = localEntries;
+          settings = { ...DEFAULT_SETTINGS, ...(localSettings || {}) };
+          if (localView) currentView = localView;
+
+          scheduleSyncToServer({
+            entries,
+            settings,
+            view: currentView,
+          });
+          flushSyncToServer();
+        } else {
+          // Both are empty
+          entries = [];
+          settings = { ...DEFAULT_SETTINGS, ...(serverData.settings || localSettings || {}) };
+          if (serverData.view) currentView = serverData.view;
+          else if (localView) currentView = localView;
+        }
+      } else {
+        // Server unreachable or standalone desktop mode
+        entries = localEntries || [];
+        settings = { ...DEFAULT_SETTINGS, ...(localSettings || {}) };
+        if (localView) currentView = localView;
+      }
+
       applyTheme();
 
       // Restore saved view preference (defaults to 'grid' if never changed)
-      const savedView = localStorage.getItem(storeKey('mangaView'));
-      if (savedView && ['list', 'compact', 'grid', 'links'].includes(savedView)) {
-        currentView = savedView;
+      if (['list', 'compact', 'grid', 'links'].includes(currentView)) {
         document.querySelectorAll('.view-toggles .btn-icon').forEach(b => {
-          b.classList.toggle('active', !!b.getAttribute('onclick')?.includes(`'${savedView}'`));
+          b.classList.toggle('active', !!b.getAttribute('onclick')?.includes(`'${currentView}'`));
         });
       }
 

@@ -4,6 +4,7 @@ const express  = require('express');
 const path     = require('path');
 const fs       = require('fs');
 const crypto   = require('crypto');
+const dns      = require('dns').promises;
 const { exec } = require('child_process');
 
 const helmet        = require('helmet');
@@ -19,6 +20,7 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 // ─── SQLite — users + sessions ────────────────────────────────────────────────
 const db = new Database(path.join(DATA_DIR, 'users.db'));
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -39,6 +41,14 @@ db.exec(`
     ciphertext TEXT    NOT NULL,
     iv         TEXT    NOT NULL,
     PRIMARY KEY (user_id, key_name),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE TABLE IF NOT EXISTS user_data (
+    user_id    INTEGER PRIMARY KEY,
+    entries    TEXT    NOT NULL DEFAULT '[]',
+    settings   TEXT    NOT NULL DEFAULT '{}',
+    view       TEXT    NOT NULL DEFAULT 'grid',
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 `);
@@ -98,16 +108,39 @@ if (fs.existsSync(SECRET_FILE)) {
   fs.writeFileSync(SECRET_FILE, SESSION_SECRET, { mode: 0o600 });
 }
 
-const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes
+const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes idle timeout
+const ABSOLUTE_SESSION_MAX_MS = 7 * 24 * 60 * 60 * 1000; // 7 days absolute maximum session lifetime
 const BCRYPT_ROUNDS  = 12;
 // HTTPS is required by default. Set VLT_HTTPS=false to allow plain HTTP (e.g. during local dev).
 const httpsRequired  = process.env.VLT_HTTPS !== 'false';
 
-// ─── Login rate limiter — 10 attempts per 15 min per IP ───────────────────────
+// ─── Rate limiters ─────────────────────────────────────────────────────────────
+// Login: 10 attempts per 15 min per IP
 const loginLimiter = new RateLimiterMemory({
   points: 10,
   duration: 15 * 60,
 });
+
+// Setup: 5 attempts per 15 min per IP
+const setupLimiter = new RateLimiterMemory({
+  points: 5,
+  duration: 15 * 60,
+});
+
+// General API / Proxy limiter: 120 requests per minute per IP
+const apiLimiter = new RateLimiterMemory({
+  points: 120,
+  duration: 60,
+});
+
+async function rateLimitApi(req, res, next) {
+  try {
+    await apiLimiter.consume(req.ip);
+    next();
+  } catch {
+    res.status(429).json({ error: 'Too many requests. Please slow down.' });
+  }
+}
 
 // ─── Express app ─────────────────────────────────────────────────────────────
 const app = express();
@@ -125,13 +158,41 @@ if (httpsRequired) {
   });
 }
 
-// Security headers
+// Industry-standard security headers via Helmet
 app.use(helmet({
-  contentSecurityPolicy: false, // app uses inline scripts; tighten if desired
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      connectSrc: [
+        "'self'",
+        'https://api.mangadex.org',
+        'https://graphql.anilist.co',
+        'https://api.mangaupdates.com',
+        'https://nhentai.net',
+        'https://hitomi.la'
+      ],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
+  dnsPrefetchControl: { allow: false },
+  frameguard: { action: 'deny' },
+  hsts: httpsRequired ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 
 // Body parsing
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 // Session middleware
 app.use(session({
@@ -139,19 +200,29 @@ app.use(session({
   name: 'vlt.sid',
   resave: false,
   saveUninitialized: false,
-  rolling: true,              // reset 15-min window on every request
+  rolling: true,              // reset 15-min idle window on every request
   store: new SQLiteStore(),
   cookie: {
     httpOnly: true,           // JS cannot read the cookie
     sameSite: 'strict',       // blocks CSRF via cross-site requests
-      secure: httpsRequired,     // false only when VLT_HTTPS=false
+    secure: httpsRequired,     // false only when VLT_HTTPS=false
     maxAge: SESSION_TTL_MS,
   },
 }));
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
-  if (req.session?.userId) return next();
+  if (req.session?.userId) {
+    // Enforce absolute session lifetime (OWASP ASVS 3.3)
+    if (req.session.createdAt && (Date.now() - req.session.createdAt > ABSOLUTE_SESSION_MAX_MS)) {
+      req.session.destroy(() => {});
+      if (req.accepts('html')) return res.redirect('/login');
+      return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    }
+    const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.session.userId);
+    if (user) return next();
+    req.session.destroy(() => {});
+  }
   if (req.accepts('html')) return res.redirect('/login');
   res.status(401).json({ error: 'Unauthenticated' });
 }
@@ -166,14 +237,22 @@ function setupRequired() {
 app.get('/api/auth/status', (req, res) => {
   const userId = req.session?.userId ?? null;
   let isAdmin = false;
+  let authenticated = false;
+  let username = null;
   if (userId) {
-    const row = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId);
-    isAdmin = !!(row?.is_admin);
+    const row = db.prepare('SELECT id, username, is_admin FROM users WHERE id = ?').get(userId);
+    if (row) {
+      authenticated = true;
+      isAdmin = !!row.is_admin;
+      username = row.username;
+    } else {
+      req.session.destroy(() => {});
+    }
   }
   res.json({
-    authenticated: !!userId,
-    userId,
-    username: req.session?.username ?? null,
+    authenticated,
+    userId: authenticated ? userId : null,
+    username,
     isAdmin,
     setupRequired: setupRequired(),
   });
@@ -181,15 +260,21 @@ app.get('/api/auth/status', (req, res) => {
 
 // First-run setup — only works while no users exist
 app.post('/api/auth/setup', async (req, res) => {
+  try {
+    await setupLimiter.consume(req.ip);
+  } catch {
+    return res.status(429).json({ error: 'Too many setup attempts. Try again in 15 minutes.' });
+  }
+
   if (!setupRequired()) {
     return res.status(403).json({ error: 'Setup already complete.' });
   }
   const { username, password } = req.body ?? {};
   if (
     typeof username !== 'string' || username.trim().length < 1 || username.trim().length > 64 ||
-    typeof password !== 'string' || password.length < 8 || password.length > 128
+    typeof password !== 'string' || password.length < 8 || password.length > 72
   ) {
-    return res.status(400).json({ error: 'Invalid username or password (min 8 chars).' });
+    return res.status(400).json({ error: 'Invalid username or password (min 8, max 72 chars).' });
   }
   const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   try {
@@ -198,8 +283,9 @@ app.post('/api/auth/setup', async (req, res) => {
     ).get(username.trim(), hash);
     req.session.regenerate((err) => {
       if (err) return res.status(500).json({ error: 'Session error.' });
-      req.session.userId   = row.id;
-      req.session.username = row.username;
+      req.session.userId    = row.id;
+      req.session.username  = row.username;
+      req.session.createdAt = Date.now();
       res.json({ ok: true });
     });
   } catch (e) {
@@ -220,7 +306,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 
   const { username, password } = req.body ?? {};
-  if (typeof username !== 'string' || typeof password !== 'string') {
+  if (typeof username !== 'string' || typeof password !== 'string' || password.length > 72) {
     return res.status(400).json({ error: 'Invalid request.' });
   }
 
@@ -237,8 +323,9 @@ app.post('/api/auth/login', async (req, res) => {
   // Session fixation prevention — regenerate session ID on login
   req.session.regenerate((err) => {
     if (err) return res.status(500).json({ error: 'Session error.' });
-    req.session.userId   = user.id;
-    req.session.username = user.username;
+    req.session.userId    = user.id;
+    req.session.username  = user.username;
+    req.session.createdAt = Date.now();
     res.json({ ok: true });
   });
 });
@@ -274,9 +361,9 @@ app.post('/api/auth/users', requireAuth, requireAdmin, async (req, res) => {
   const { username, password } = req.body ?? {};
   if (
     typeof username !== 'string' || username.trim().length < 1 || username.trim().length > 64 ||
-    typeof password !== 'string' || password.length < 8 || password.length > 128
+    typeof password !== 'string' || password.length < 8 || password.length > 72
   ) {
-    return res.status(400).json({ error: 'Invalid username or password (min 8 chars).' });
+    return res.status(400).json({ error: 'Invalid username or password (min 8, max 72 chars).' });
   }
   const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   try {
@@ -292,13 +379,29 @@ app.post('/api/auth/users', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// Delete a user account (cannot delete yourself)
+// Delete a user account (cannot delete yourself or the primary admin)
 app.delete('/api/auth/users/:id', requireAuth, requireAdmin, (req, res) => {
   const targetId = parseInt(req.params.id, 10);
   if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user ID.' });
   if (targetId === req.session.userId) {
     return res.status(400).json({ error: 'You cannot delete your own account.' });
   }
+  // Protect the primary admin account from deletion
+  const minUser = db.prepare('SELECT MIN(id) AS min_id FROM users').get();
+  if (targetId === minUser?.min_id) {
+    return res.status(400).json({ error: 'The primary admin account cannot be deleted.' });
+  }
+  // Invalidate any active sessions belonging to the deleted user
+  try {
+    db.prepare(`
+      DELETE FROM sessions
+      WHERE data LIKE '%"userId":' || ? || ',%'
+         OR data LIKE '%"userId":' || ? || '}'
+    `).run(targetId, targetId);
+  } catch {}
+
+  db.prepare('DELETE FROM secrets WHERE user_id = ?').run(targetId);
+  db.prepare('DELETE FROM user_data WHERE user_id = ?').run(targetId);
   const result = db.prepare('DELETE FROM users WHERE id = ?').run(targetId);
   if (result.changes === 0) return res.status(404).json({ error: 'User not found.' });
   res.json({ ok: true });
@@ -383,7 +486,77 @@ function getSecretValue(userId, name) {
   try { return _decryptSecret(userId, row.ciphertext, row.iv); } catch { return null; }
 }
 
-// ─── Serve login page (public) ────────────────────────────────────────────────
+// ─── User Library & Settings Data (persisted in SQLite) ───────────────────────
+app.get('/api/data', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT entries, settings, view, updated_at FROM user_data WHERE user_id = ?').get(req.session.userId);
+  if (!row) {
+    return res.json({ entries: [], settings: {}, view: 'grid', updatedAt: 0, isNew: true });
+  }
+  let entries = [];
+  let settings = {};
+  try { entries = JSON.parse(row.entries || '[]'); } catch {}
+  try { settings = JSON.parse(row.settings || '{}'); } catch {}
+  res.json({
+    entries,
+    settings,
+    view: row.view || 'grid',
+    updatedAt: row.updated_at,
+    isNew: false,
+  });
+});
+
+function sanitizeSettings(obj) {
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return {};
+  const clean = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+    if (typeof v === 'boolean' || typeof v === 'string' || typeof v === 'number') {
+      clean[k] = v;
+    }
+  }
+  return clean;
+}
+
+const handleSaveUserData = (req, res) => {
+  const { entries, settings, view } = req.body ?? {};
+  if (entries !== undefined && !Array.isArray(entries)) {
+    return res.status(400).json({ error: 'Entries must be an array.' });
+  }
+  if (settings !== undefined && (typeof settings !== 'object' || settings === null || Array.isArray(settings))) {
+    return res.status(400).json({ error: 'Settings must be an object.' });
+  }
+  if (view !== undefined && (typeof view !== 'string' || !['list', 'compact', 'grid', 'links'].includes(view))) {
+    return res.status(400).json({ error: 'Invalid view value.' });
+  }
+
+  const existing = db.prepare('SELECT entries, settings, view FROM user_data WHERE user_id = ?').get(req.session.userId);
+  const newEntries = entries !== undefined ? JSON.stringify(entries) : (existing?.entries || '[]');
+  const newSettings = settings !== undefined ? JSON.stringify(sanitizeSettings(settings)) : (existing?.settings || '{}');
+  const newView = view !== undefined ? view : (existing?.view || 'grid');
+  const now = Math.floor(Date.now() / 1000);
+
+  db.prepare(`
+    INSERT INTO user_data (user_id, entries, settings, view, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      entries = excluded.entries,
+      settings = excluded.settings,
+      view = excluded.view,
+      updated_at = excluded.updated_at
+  `).run(req.session.userId, newEntries, newSettings, newView, now);
+
+  res.json({ ok: true, updatedAt: now });
+};
+
+app.put('/api/data', requireAuth, handleSaveUserData);
+app.post('/api/data', requireAuth, handleSaveUserData);
+
+// ─── Public routes ───────────────────────────────────────────────────────────
+app.get('/favicon.svg', (req, res) => {
+  res.sendFile(path.join(__dirname, 'favicon.svg'));
+});
+
+// Serve login page (public)
 app.get('/login', (req, res) => {
   if (req.session?.userId) return res.redirect('/');
   res.sendFile(path.join(__dirname, 'login.html'));
@@ -392,10 +565,10 @@ app.get('/login', (req, res) => {
 // ─── All subsequent routes require authentication ─────────────────────────────
 app.use(requireAuth);
 
-// Serve the main app
-app.use(express.static(path.join(__dirname), {
-  index: 'index.html',
-}));
+// Serve the main app explicitly (never expose raw directory contents or sensitive files)
+app.get(['/', '/index.html'], (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // ─── HCDN Anti-bot Solver ─────────────────────────────────────────────────────
 // Transparently solves HCDN JS proof-of-work challenges (used on sites like apcomics.org).
@@ -478,13 +651,80 @@ async function solveHcdnChallenge(targetUrl, baseHeaders) {
   }
 }
 
+// ─── SSRF Protection with DNS Resolution (Anti-DNS Rebinding) ────────────────
+function isPrivateIp(ip) {
+  const ipv4Match = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [_, a, b, c, d] = ipv4Match.map(Number);
+    if (a > 255 || b > 255 || c > 255 || d > 255) return true;
+    if (a === 0 || a === 127 || a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 255 && b === 255 && c === 255 && d === 255) return true;
+    return false;
+  }
+  const clean = ip.toLowerCase().replace(/^\[|\]$/g, '');
+  if (
+    clean === '::1' ||
+    clean === '::' ||
+    clean.startsWith('fc') ||
+    clean.startsWith('fd') ||
+    clean.startsWith('fe80')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function isSafeUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block localhost, local/internal domains
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.internal')
+    ) {
+      return false;
+    }
+
+    const cleanHost = hostname.replace(/^\[|\]$/g, '');
+    if (isPrivateIp(cleanHost)) {
+      return false;
+    }
+
+    // Resolve DNS to verify domain does not resolve to a private/loopback/metadata IP
+    try {
+      const records = await dns.lookup(cleanHost, { all: true });
+      for (const rec of records) {
+        if (isPrivateIp(rec.address)) {
+          return false;
+        }
+      }
+    } catch {
+      return false; // Cannot resolve DNS
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── CORS Proxy ───────────────────────────────────────────────────────────────
 // Lets the browser fetch any URL server-side, avoiding CORS restrictions.
 // Automatically solves HCDN JS challenges before returning content.
-app.get('/api/proxy', async (req, res) => {
+app.get('/api/proxy', rateLimitApi, async (req, res) => {
   const url = req.query.url;
-  if (!url || !/^https?:\/\//.test(url)) {
-    return res.status(400).send('Invalid URL');
+  if (typeof url !== 'string' || !(await isSafeUrl(url))) {
+    return res.status(400).send('Invalid or restricted URL');
   }
   try {
     const ctrl = new AbortController();
@@ -514,14 +754,14 @@ app.get('/api/proxy', async (req, res) => {
     res.status(resp.status).send(text);
   } catch (e) {
     if (e.name === 'AbortError') return res.status(504).send('Request timed out');
-    res.status(502).send(e.message);
+    res.status(502).send('Upstream request failed');
   }
 });
 
 // Image proxy — returns binary with correct Content-Type (used for cover caching)
-app.get('/api/proxy-img', async (req, res) => {
+app.get('/api/proxy-img', rateLimitApi, async (req, res) => {
   const url = req.query.url;
-  if (!url || !/^https?:\/\//.test(url)) return res.status(400).send('Invalid URL');
+  if (typeof url !== 'string' || !(await isSafeUrl(url))) return res.status(400).send('Invalid or restricted URL');
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -554,7 +794,7 @@ app.get('/api/proxy-img', async (req, res) => {
 // GET /api/hitomi/:id — fetches ltn.gold-usergeneratedcontent.net/galleries/{id}.js server-side.
 // hitomi.la moved its resource CDN to gold-usergeneratedcontent.net; SNI blocking
 // requires https.request with servername:'' to bypass.  Returns normalised JSON.
-app.get('/api/hitomi/:id', async (req, res) => {
+app.get('/api/hitomi/:id', rateLimitApi, async (req, res) => {
   const { id } = req.params;
   if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Invalid ID' });
   const https = require('https');
@@ -624,7 +864,7 @@ app.get('/api/hitomi/:id', async (req, res) => {
 // ─── NHentai Gallery (official v2 API with API key) ──────────────────────────────
 // GET /api/nh/:id — call nhentai v2 API server-side using the user's stored API key.
 // Returns normalised metadata so the client doesn't need to know the v2 schema.
-app.get('/api/nh/:id', async (req, res) => {
+app.get('/api/nh/:id', rateLimitApi, async (req, res) => {
   const { id } = req.params;
   if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Invalid ID' });
   const nhKey = getSecretValue(req.session?.userId, 'nh-key');
@@ -674,7 +914,7 @@ app.get('/api/nh/:id', async (req, res) => {
 });
 
 // GET /api/nh/search — search nhentai v2 API using the user's stored API key
-app.get('/api/nh/search', async (req, res) => {
+app.get('/api/nh/search', rateLimitApi, async (req, res) => {
   const { q } = req.query;
   if (!q || typeof q !== 'string') return res.status(400).json({ error: 'Missing query' });
   const nhKey = getSecretValue(req.session?.userId, 'nh-key');
@@ -828,14 +1068,25 @@ async function downloadChrome(sessionId) {
   return result.executablePath;
 }
 
-app.post('/api/cf-open', async (req, res) => {
-  const { url } = req.body;
-  if (!url || !/^https?:\/\//.test(url)) {
-    return res.status(400).json({ error: 'Invalid URL' });
+app.post('/api/cf-open', rateLimitApi, async (req, res) => {
+  const { url } = req.body ?? {};
+  if (typeof url !== 'string' || !(await isSafeUrl(url))) {
+    return res.status(400).json({ error: 'Invalid or restricted URL' });
   }
 
-  const sessionId = Date.now().toString();
-  cfSessions.set(sessionId, { status: 'open' });
+  // Prevent DoS via concurrent browser instances per user
+  let activeSessions = 0;
+  for (const s of cfSessions.values()) {
+    if (s.userId === req.session.userId && (s.status === 'open' || s.status === 'downloading')) {
+      activeSessions++;
+    }
+  }
+  if (activeSessions >= 2) {
+    return res.status(429).json({ error: 'Too many concurrent browser sessions. Please wait.' });
+  }
+
+  const sessionId = crypto.randomUUID();
+  cfSessions.set(sessionId, { userId: req.session.userId, status: 'open' });
   res.json({ sessionId, headless: IS_HEADLESS }); // respond immediately so client starts polling
 
   try {
@@ -920,6 +1171,9 @@ app.post('/api/cf-open', async (req, res) => {
 app.get('/api/cf-result/:id', (req, res) => {
   const s = cfSessions.get(req.params.id);
   if (!s) return res.json({ status: 'notfound' });
+  if (s.userId && s.userId !== req.session?.userId) {
+    return res.status(403).json({ error: 'Unauthorized access to session.' });
+  }
   res.json(s);
   // Clean up session a few seconds after delivering the final state
   if (s.status === 'done' || s.status === 'error') {
