@@ -163,7 +163,8 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://static.cloudflareinsights.com'],
+      scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
@@ -173,7 +174,8 @@ app.use(helmet({
         'https://graphql.anilist.co',
         'https://api.mangaupdates.com',
         'https://nhentai.net',
-        'https://hitomi.la'
+        'https://hitomi.la',
+        'https://cloudflareinsights.com'
       ],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
@@ -182,8 +184,8 @@ app.use(helmet({
     },
   },
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-  crossOriginOpenerPolicy: { policy: 'same-origin' },
+  crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
   dnsPrefetchControl: { allow: false },
   frameguard: { action: 'deny' },
   hsts: httpsRequired ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
@@ -552,7 +554,7 @@ app.put('/api/data', requireAuth, handleSaveUserData);
 app.post('/api/data', requireAuth, handleSaveUserData);
 
 // ─── Public routes ───────────────────────────────────────────────────────────
-app.get('/favicon.svg', (req, res) => {
+app.get(['/favicon.svg', '/favicon.ico'], (req, res) => {
   res.sendFile(path.join(__dirname, 'favicon.svg'));
 });
 
