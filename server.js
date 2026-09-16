@@ -12,6 +12,7 @@ const session       = require('express-session');
 const bcrypt        = require('bcrypt');
 const Database      = require('better-sqlite3');
 const { RateLimiterMemory } = require('rate-limiter-flexible');
+const APP_VERSION = require('./package.json').version || '2.0.1';
 
 // ─── Data directory (persists user accounts and sessions) ─────────────────────
 const DATA_DIR = path.join(__dirname, 'data');
@@ -1070,7 +1071,7 @@ app.all('/api/mangaupdates/search', rateLimitApi, async (req, res) => {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'VLT-Tracker/2.0.0 (https://github.com/jt-ito/vlt-tracker)',
+        'User-Agent': `VLT-Tracker/${APP_VERSION} (https://github.com/jt-ito/vlt-tracker)`,
       },
       body: JSON.stringify({ search: query.trim(), perpage: 1 }),
     });
@@ -1094,7 +1095,7 @@ app.get(['/api/mangaupdates/series/:id', '/api/mangaupdates/series/:id/categorie
       signal: ctrl.signal,
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'VLT-Tracker/2.0.0 (https://github.com/jt-ito/vlt-tracker)',
+        'User-Agent': `VLT-Tracker/${APP_VERSION} (https://github.com/jt-ito/vlt-tracker)`,
       },
     });
     clearTimeout(timer);
@@ -1377,6 +1378,7 @@ app.post('/api/cf-open', rateLimitApi, async (req, res) => {
     });
 
     const [page] = await browser.pages();
+    cfSessions.set(sessionId, { userId: req.session.userId, status: 'open', page, browser });
 
     // Mask automation signals to improve CF bypass success rate
     await page.evaluateOnNewDocument(() => {
@@ -1385,29 +1387,60 @@ app.post('/api/cf-open', rateLimitApi, async (req, res) => {
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
-    // In headless mode, give CF's JS challenge a moment to run and auto-resolve
-    const maxTries = IS_HEADLESS ? 30 : 150; // 1 min headless, 5 min interactive
+    // In headless mode, give CF's JS challenge a moment to run, auto-click checkbox, or stream to user
+    const maxTries = IS_HEADLESS ? 60 : 150; // 2 min headless, 5 min interactive
     let tries = 0;
     const poll = setInterval(async () => {
       tries++;
       if (tries > maxTries) {
         clearInterval(poll);
-        cfSessions.set(sessionId, { status: 'error', error: IS_HEADLESS
-          ? 'Cloudflare challenge could not be bypassed automatically. This site may require a CAPTCHA — try importing via the regular URL import instead.'
-          : 'Timed out waiting for Cloudflare bypass' });
+        const s = cfSessions.get(sessionId) || {};
+        s.status = 'error';
+        s.error = IS_HEADLESS
+          ? 'Automatic bypass timed out. You can open the URL in your browser and paste the HTML below to import.'
+          : 'Timed out waiting for Cloudflare bypass';
+        cfSessions.set(sessionId, s);
         await browser.close().catch(() => {});
         return;
       }
+
+      // 1. Attempt to auto-click Turnstile checkbox if present
+      try {
+        for (const frame of page.frames()) {
+          const el = await frame.$('input[type="checkbox"], .ctp-checkbox-label, #challenge-stage input, #cf-stage input');
+          if (el) {
+            await el.click().catch(() => {});
+            break;
+          }
+        }
+      } catch (_) {}
+
+      // 2. Take a screenshot for the remote interactive view
+      try {
+        const buf = await page.screenshot({ type: 'jpeg', quality: 55 });
+        const s = cfSessions.get(sessionId);
+        if (s) s.screenshot = buf.toString('base64');
+      } catch (_) {}
+
+      // 3. Check if challenge page has resolved
       try {
         const title = await page.title().catch(() => '');
         if (/just a moment/i.test(title)) return; // still on challenge page
         const html = await page.content();
-        cfSessions.set(sessionId, { status: 'done', html });
+        if (isCloudflarePage(html)) return; // still on challenge page
+
+        const s = cfSessions.get(sessionId) || {};
+        s.status = 'done';
+        s.html = html;
+        cfSessions.set(sessionId, s);
         clearInterval(poll);
         setTimeout(() => browser.close().catch(() => {}), 1000);
       } catch (e) {
         clearInterval(poll);
-        cfSessions.set(sessionId, { status: 'error', error: e.message });
+        const s = cfSessions.get(sessionId) || {};
+        s.status = 'error';
+        s.error = e.message;
+        cfSessions.set(sessionId, s);
         await browser.close().catch(() => {});
       }
     }, 2000);
@@ -1417,13 +1450,53 @@ app.post('/api/cf-open', rateLimitApi, async (req, res) => {
   }
 });
 
+app.post('/api/cf-click/:id', rateLimitApi, async (req, res) => {
+  const s = cfSessions.get(req.params.id);
+  if (!s || !s.page) return res.status(404).json({ error: 'Session not active' });
+  if (s.userId && s.userId !== req.session?.userId) {
+    return res.status(403).json({ error: 'Unauthorized access.' });
+  }
+  const { x, y } = req.body ?? {};
+  if (typeof x !== 'number' || typeof y !== 'number') {
+    return res.status(400).json({ error: 'Invalid coordinates' });
+  }
+  try {
+    await s.page.mouse.click(Math.round(x), Math.round(y));
+    await new Promise(r => setTimeout(r, 600));
+    const buf = await s.page.screenshot({ type: 'jpeg', quality: 55 });
+    s.screenshot = buf.toString('base64');
+    res.json({ success: true, screenshot: s.screenshot });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/cf-close/:id', rateLimitApi, async (req, res) => {
+  const s = cfSessions.get(req.params.id);
+  if (!s) return res.json({ ok: true });
+  if (s.userId && s.userId !== req.session?.userId) {
+    return res.status(403).json({ error: 'Unauthorized access.' });
+  }
+  if (s.browser) {
+    await s.browser.close().catch(() => {});
+  }
+  cfSessions.delete(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get('/api/cf-result/:id', (req, res) => {
   const s = cfSessions.get(req.params.id);
   if (!s) return res.json({ status: 'notfound' });
   if (s.userId && s.userId !== req.session?.userId) {
     return res.status(403).json({ error: 'Unauthorized access to session.' });
   }
-  res.json(s);
+  res.json({
+    status: s.status,
+    message: s.message,
+    error: s.error,
+    screenshot: s.screenshot || null,
+    html: s.status === 'done' ? s.html : undefined,
+  });
   // Clean up session a few seconds after delivering the final state
   if (s.status === 'done' || s.status === 'error') {
     setTimeout(() => cfSessions.delete(req.params.id), 10000);

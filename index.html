@@ -1771,11 +1771,35 @@
     </div>
     <div class="cf-panel-body">
       <webview id="cfWebview" partition="persist:manga"></webview>
-      <!-- Web-server mode: no webview, shows status while puppeteer window is open -->
-      <div id="cfServerStatus" class="hidden" style="display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:48px 32px">
-        <div style="font-size:2.8rem">&#x1F310;</div>
-        <div id="cfServerStatusText" style="font-size:1rem;font-weight:600;color:var(--text)"></div>
-        <div id="cfServerStatusSub" style="font-size:0.83rem;color:var(--text-muted);max-width:380px;line-height:1.55;text-align:center"></div>
+      <!-- Web-server mode: interactive remote view and manual HTML fallback -->
+      <div id="cfServerStatus" class="hidden" style="display:flex;flex:1;flex-direction:column;overflow-y:auto;padding:16px 20px;gap:14px;min-height:0">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--bg);padding:10px 16px;border-radius:10px;border:1px solid var(--border);flex-shrink:0">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:1.4rem">&#x1F310;</span>
+            <div>
+              <div id="cfServerStatusText" style="font-size:0.92rem;font-weight:600;color:var(--text)">Connecting…</div>
+              <div id="cfServerStatusSub" style="font-size:0.78rem;color:var(--text-muted)">Remote browser stream &mdash; click the verification checkbox directly if prompted</div>
+            </div>
+          </div>
+          <div id="cfClickBadge" style="display:none;font-size:0.75rem;padding:3px 8px;border-radius:6px;background:rgba(99,102,241,0.15);color:var(--accent);font-weight:600">Clicking…</div>
+        </div>
+        <div id="cfRemoteContainer" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:260px;background:rgba(0,0,0,0.3);border-radius:10px;border:1px dashed var(--border);padding:12px;position:relative;flex:1">
+          <div id="cfRemoteLoading" style="display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--text-muted);padding:30px">
+            <span style="font-size:2.2rem">&#x23F3;</span>
+            <span style="font-size:0.85rem">Rendering verification page on server…</span>
+          </div>
+          <img id="cfScreenImg" onclick="onCfScreenClick(event)" style="display:none;max-width:100%;max-height:48vh;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.5);cursor:crosshair" alt="Cloudflare verification screen" title="Click directly on the verification checkbox or puzzle" />
+        </div>
+        <div style="background:var(--bg);padding:12px 16px;border-radius:10px;border:1px solid var(--border);display:flex;flex-direction:column;gap:8px;flex-shrink:0">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <span style="font-size:0.83rem;font-weight:600;color:var(--text)">&#x1F4CB; Stuck? Solve in your own browser &amp; paste source:</span>
+            <div style="display:flex;gap:8px">
+              <a id="cfExternalLink" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-secondary" style="font-size:0.75rem;padding:4px 10px;text-decoration:none">&#x2197; Open in New Tab</a>
+              <button class="btn btn-primary" onclick="parsePastedCfHtml()" style="font-size:0.75rem;padding:4px 12px">&#x26A1; Parse Pasted HTML</button>
+            </div>
+          </div>
+          <textarea id="cfManualHtml" rows="2" placeholder="Open link in your browser, pass the Cloudflare check, right click &rarr; View Page Source (Ctrl+U), then copy and paste the HTML here&hellip;" style="width:100%;font-size:0.75rem;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:monospace;resize:vertical"></textarea>
+        </div>
       </div>
     </div>
   </div>
@@ -3943,7 +3967,7 @@
         handleSessionExpired();
       } else if (err.notFound) {
         statusEl.classList.remove('hidden');
-        statusText.textContent = '❌ Gallery not found — this ID does not exist on nhentai';
+        statusText.textContent = '❌ Gallery not found — this ID does not exist on NH';
         btn.disabled = false;
         btn.textContent = 'Retry';
         btn.onclick = () => scrapeUrl();
@@ -4020,8 +4044,19 @@
       document.getElementById('cfWebview').style.display = 'none';
       document.getElementById('cfServerStatus').classList.remove('hidden');
       document.getElementById('cfServerStatusText').textContent = 'Connecting…';
-      document.getElementById('cfServerStatusSub').textContent = '';
+      document.getElementById('cfServerStatusSub').textContent = 'Initial connection in progress…';
       document.getElementById('cfPanelSubtitle').textContent = 'Working…';
+
+      const extLink = document.getElementById('cfExternalLink');
+      if (extLink) extLink.href = url;
+      const manualHtml = document.getElementById('cfManualHtml');
+      if (manualHtml) manualHtml.value = '';
+      const screenImg = document.getElementById('cfScreenImg');
+      if (screenImg) { screenImg.style.display = 'none'; screenImg.src = ''; }
+      const remoteLoad = document.getElementById('cfRemoteLoading');
+      if (remoteLoad) remoteLoad.style.display = 'flex';
+      const badge = document.getElementById('cfClickBadge');
+      if (badge) badge.style.display = 'none';
 
       fetch('/api/cf-open', {
         method: 'POST',
@@ -4033,11 +4068,10 @@
           if (error) throw new Error(error);
           cfServerSessionId = sessionId;
           if (headless) {
-            document.getElementById('cfPanelSubtitle').textContent = 'Attempting automatic bypass…';
-            document.getElementById('cfServerStatusText').textContent = '⏳ Attempting automatic Cloudflare bypass…';
+            document.getElementById('cfPanelSubtitle').textContent = 'Attempting bypass & streaming screen…';
+            document.getElementById('cfServerStatusText').textContent = '⏳ Solving Cloudflare challenge…';
             document.getElementById('cfServerStatusSub').textContent =
-              'Headless Chromium is running on the server and trying to pass the JS challenge automatically. ' +
-              'This works for most sites — CAPTCHA-based challenges cannot be bypassed this way.';
+              'Click the verification checkbox in the preview below if prompted, or solve in your browser and paste HTML.';
           } else {
             document.getElementById('cfPanelSubtitle').textContent = 'Solve the challenge in the Chrome window — detecting automatically…';
             document.getElementById('cfServerStatusText').textContent = 'Chrome window is open — solve the challenge';
@@ -4050,7 +4084,8 @@
           cfPollTimeout = setTimeout(() => {
             clearInterval(cfPollInterval); cfPollInterval = null;
             document.getElementById('cfServerStatusText').textContent = '⏱ Timed out';
-            document.getElementById('cfServerStatusSub').textContent = 'Close this panel and try again.';
+            document.getElementById('cfServerStatusSub').textContent =
+              'Automatic attempt timed out. Open in your browser (↗ Open in New Tab) and paste the page HTML below.';
             document.getElementById('cfGrabBtn').disabled = false;
           }, 120000);
         })
@@ -4067,6 +4102,9 @@
     cfPollInterval = null;
     clearTimeout(cfPollTimeout);
     cfPollTimeout = null;
+    if (cfServerSessionId) {
+      fetch('/api/cf-close/' + cfServerSessionId, { method: 'POST' }).catch(() => {});
+    }
     cfPanelUrl = '';
     cfServerSessionId = null;
     if (IS_ELECTRON) {
@@ -4106,6 +4144,18 @@
       try {
         const res = await fetch('/api/cf-result/' + cfServerSessionId);
         const data = await res.json();
+
+        // Update live screencast if provided
+        if (data.screenshot) {
+          const img = document.getElementById('cfScreenImg');
+          const loading = document.getElementById('cfRemoteLoading');
+          if (img) {
+            img.src = 'data:image/jpeg;base64,' + data.screenshot;
+            img.style.display = 'block';
+          }
+          if (loading) loading.style.display = 'none';
+        }
+
         if (data.status === 'done') {
           clearInterval(cfPollInterval);
           cfPollInterval = null;
@@ -4121,7 +4171,8 @@
           clearInterval(cfPollInterval);
           cfPollInterval = null;
           document.getElementById('cfServerStatusText').textContent = '❌ ' + data.error;
-          document.getElementById('cfServerStatusSub').textContent = 'Close this panel and try again.';
+          document.getElementById('cfServerStatusSub').textContent =
+            'Challenge could not be passed automatically. Please open in your browser (↗ Open in New Tab), pass the check, and paste the page HTML below.';
           document.getElementById('cfGrabBtn').disabled = false;
         }
         // status 'open' or 'notfound': keep polling
@@ -4131,7 +4182,59 @@
     }
   }
 
+  async function onCfScreenClick(e) {
+    if (!cfServerSessionId) return;
+    const img = document.getElementById('cfScreenImg');
+    if (!img || !img.naturalWidth || !img.naturalHeight) return;
+    const rect = img.getBoundingClientRect();
+    const scaleX = (img.naturalWidth || 1280) / rect.width;
+    const scaleY = (img.naturalHeight || 800) / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
+
+    const badge = document.getElementById('cfClickBadge');
+    if (badge) badge.style.display = 'inline-block';
+
+    try {
+      const res = await fetch('/api/cf-click/' + cfServerSessionId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ x, y }),
+      });
+      const data = await res.json();
+      if (data && data.screenshot) {
+        img.src = 'data:image/jpeg;base64,' + data.screenshot;
+      }
+    } catch (_) {
+    } finally {
+      if (badge) badge.style.display = 'none';
+    }
+  }
+
+  function parsePastedCfHtml() {
+    const raw = (document.getElementById('cfManualHtml')?.value || '').trim();
+    if (!raw) {
+      alert('Please paste the page HTML source first.');
+      return;
+    }
+    const savedUrl = cfPanelUrl || (document.getElementById('importUrl')?.value || '').trim();
+    const result = { ...parseHtmlMeta(raw), url: savedUrl };
+    if (!result.title) {
+      const m = raw.match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (m) result.title = m[1].trim();
+    }
+    _cacheFetchMode(savedUrl, 'cf');
+    closeCfPanel();
+    document.getElementById('importBackdrop').classList.remove('hidden');
+    showImportPreview(result, savedUrl);
+  }
+
   async function cfGrabNow() {
+    const manual = (document.getElementById('cfManualHtml')?.value || '').trim();
+    if (manual) {
+      parsePastedCfHtml();
+      return;
+    }
     document.getElementById('cfGrabBtn').disabled = true;
     await tryCfExtract();
     // Re-enable only if panel is still open (tryCfExtract didn’t close it)
