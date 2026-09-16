@@ -633,6 +633,16 @@ function isHcdnPage(html) {
   return typeof html === 'string' && html.includes('/hcdn-cgi/jschallenge');
 }
 
+function isCloudflarePage(html) {
+  if (!html || typeof html !== 'string') return false;
+  return html.includes('__cf_chl_opt') ||
+         html.includes('cf-browser-verification') ||
+         html.includes('cloudflare.com/cdn-cgi/challenge') ||
+         /window\._cf_chl_ctx\b/.test(html) ||
+         /<title>[^<]*Just a moment/i.test(html) ||
+         /Checking your browser before accessing/i.test(html);
+}
+
 async function solveHcdnChallenge(targetUrl, baseHeaders) {
   const origin = new URL(targetUrl).origin;
   const jar = {};
@@ -816,6 +826,10 @@ app.get('/api/proxy', rateLimitApi, async (req, res) => {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         return res.send(solved);
       }
+    }
+
+    if (isCloudflarePage(text)) {
+      res.setHeader('X-Cloudflare-Detected', '1');
     }
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -1041,7 +1055,62 @@ app.get('/api/atsu/:id', rateLimitApi, async (req, res) => {
   }
 });
 
-// ─── NHentai Gallery (official v2 API with API key) ──────────────────────────────
+// ─── MangaUpdates Endpoints (server-side proxy to bypass CORS) ─────────────────
+app.all('/api/mangaupdates/search', rateLimitApi, async (req, res) => {
+  const query = req.method === 'POST' ? req.body?.search : req.query?.q;
+  if (!query || typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({ error: 'Search query required' });
+  }
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    const resp = await fetch('https://api.mangaupdates.com/v1/series/search', {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'VLT-Tracker/2.0.0 (https://github.com/jt-ito/vlt-tracker)',
+      },
+      body: JSON.stringify({ search: query.trim(), perpage: 1 }),
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return res.status(resp.status).json({ error: `MangaUpdates HTTP ${resp.status}` });
+    const json = await resp.json();
+    res.json(json);
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).json({ error: 'MangaUpdates request timed out' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.get(['/api/mangaupdates/series/:id', '/api/mangaupdates/series/:id/categories'], rateLimitApi, async (req, res) => {
+  const { id } = req.params;
+  if (!/^\d+$/.test(id)) return res.status(400).json({ error: 'Invalid Series ID' });
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const resp = await fetch(`https://api.mangaupdates.com/v1/series/${id}`, {
+      signal: ctrl.signal,
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'VLT-Tracker/2.0.0 (https://github.com/jt-ito/vlt-tracker)',
+      },
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return res.status(resp.status).json({ error: `MangaUpdates HTTP ${resp.status}` });
+    const json = await resp.json();
+    if (req.path.endsWith('/categories')) {
+      return res.json({ categories: json.categories || [] });
+    }
+    res.json(json);
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).json({ error: 'MangaUpdates request timed out' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ─── NH Gallery (official v2 API with API key) ──────────────────────────────
 // GET /api/nh/:id — call nhentai v2 API server-side using the user's stored API key.
 // Returns normalised metadata so the client doesn't need to know the v2 schema.
 app.get('/api/nh/:id', rateLimitApi, async (req, res) => {

@@ -1872,17 +1872,21 @@
       const directUrl = thumbUrl.startsWith('/api/proxy-img?url=')
         ? decodeURIComponent(thumbUrl.slice(19))
         : thumbUrl;
-      // Try direct fetch first (works in Electron; may be CORS-blocked in web mode)
-      try {
-        const r = await fetch(directUrl, { signal: AbortSignal.timeout(10000) });
-        if (r.ok) blob = await r.blob();
-      } catch (_) {}
-      // Fall back to server-side image proxy (handles CORS for web/Docker mode)
+      const isWebMode = window.location.protocol !== 'file:' && Boolean(window.location.host);
+      const isCrossOrigin = /^https?:\/\//i.test(directUrl) && (isWebMode ? !directUrl.startsWith(window.location.origin) : false);
+      // Try direct fetch only for same-origin or in desktop/Electron mode
+      if (!isCrossOrigin) {
+        try {
+          const r = await fetch(directUrl, { signal: AbortSignal.timeout(10000) });
+          if (r.ok) blob = await r.blob();
+        } catch (_) {}
+      }
+      // Route through server-side image proxy (handles CORS and referers for web/Docker mode)
       if (!blob) {
         try {
           const proxyUrl = thumbUrl.startsWith('/api/proxy-img')
             ? thumbUrl
-            : '/api/proxy-img?url=' + encodeURIComponent(thumbUrl);
+            : '/api/proxy-img?url=' + encodeURIComponent(directUrl);
           const r = await fetch(proxyUrl,
             { signal: AbortSignal.timeout(15000) });
           if (r.ok) blob = await r.blob();
@@ -3204,7 +3208,7 @@
     const m = url.match(/anilist\.co\/manga\/(\d+)/i);
     if (!m) return null;
     const id = parseInt(m[1]);
-    const query = `query($id:Int){Media(id:$id,type:MANGA){title{romaji english}coverImage{large}staff(perPage:3){nodes{name{full}}}description(asHtml:false)genres tags(sort:RANK_DESC){name rank}}}`;
+    const query = `query($id:Int){Media(id:$id,type:MANGA){title{romaji english}coverImage{large}staff(perPage:3){nodes{name{full}}}description(asHtml:false)genres tags{name rank}}}`;
     const res = await fetch('https://graphql.anilist.co', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -3223,7 +3227,7 @@
     const description = media.description?.replace(/<[^>]*>/g, '') || '';
     const tags = [
       ...(media.genres || []),
-      ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name),
+      ...(media.tags || []).slice().sort((a,b) => (b.rank||0) - (a.rank||0)).filter(t => t.rank >= 60).map(t => t.name),
     ];
     // Alt titles — the titles not chosen as main
     const allTitles = [media.title.romaji, media.title.english, media.title.native].filter(Boolean);
@@ -3326,13 +3330,14 @@
   }
 
   async function searchAniListTags(title) {
+    if (!title || !title.trim()) return [];
     try {
-      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){genres tags(sort:RANK_DESC){name rank}}}`;
+      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){genres tags{name rank}}}`;
       const res = await Promise.race([
         fetch('https://graphql.anilist.co', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ query, variables: { s: title } }),
+          body: JSON.stringify({ query, variables: { s: title.trim() } }),
         }),
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
       ]);
@@ -3342,19 +3347,48 @@
       if (!media) return [];
       return [
         ...(media.genres || []),
-        ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name),
+        ...(media.tags || []).slice().sort((a, b) => (b.rank || 0) - (a.rank || 0)).filter(t => t.rank >= 60).map(t => t.name),
       ];
     } catch(e) { return []; }
   }
 
+  async function fetchMangaUpdatesSearch(searchTitle) {
+    const isWebMode = window.location.protocol !== 'file:' && Boolean(window.location.host);
+    if (isWebMode) {
+      try {
+        const r = await fetch(`/api/mangaupdates/search?q=${encodeURIComponent(searchTitle)}`, {
+          headers: { Accept: 'application/json' },
+        });
+        if (r.ok) return r;
+      } catch (_) {}
+    }
+    return fetch('https://api.mangaupdates.com/v1/series/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ search: searchTitle, perpage: 1 }),
+    });
+  }
+
+  async function fetchMangaUpdatesCategories(seriesId) {
+    const isWebMode = window.location.protocol !== 'file:' && Boolean(window.location.host);
+    if (isWebMode) {
+      try {
+        const r = await fetch(`/api/mangaupdates/series/${encodeURIComponent(seriesId)}/categories`, {
+          headers: { Accept: 'application/json' },
+        });
+        if (r.ok) return r;
+      } catch (_) {}
+    }
+    return fetch(`https://api.mangaupdates.com/v1/series/${encodeURIComponent(seriesId)}/categories`, {
+      headers: { Accept: 'application/json' },
+    });
+  }
+
   async function searchMangaUpdatesTags(title) {
+    if (!title || !title.trim()) return [];
     try {
       const res = await Promise.race([
-        fetch('https://api.mangaupdates.com/v1/series/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ search: title, perpage: 1 }),
-        }),
+        fetchMangaUpdatesSearch(title.trim()),
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
       ]);
       if (!res.ok) return [];
@@ -3366,7 +3400,7 @@
       if (!seriesId) return genres;
       try {
         const catRes = await Promise.race([
-          fetch(`https://api.mangaupdates.com/v1/series/${seriesId}/categories`),
+          fetchMangaUpdatesCategories(seriesId),
           new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
         ]);
         if (catRes.ok) {
@@ -3420,13 +3454,18 @@
       }
       // 404 means we're not running the local server — skip silently
       if (r.status === 404 || r.status === 0) throw new Error('no local server');
-      if (!r.ok) throw new Error('local proxy ' + r.status);
       const text = await r.text();
       if (isLoginPage(text)) {
         const err = new Error('Session expired. Please log in again.');
         err.unauthenticated = true;
         throw err;
       }
+      if (r.headers.get('X-Cloudflare-Detected') === '1' || isCloudflarePage(text)) {
+        const err = new Error('Cloudflare challenge detected');
+        err.cfDetected = true;
+        throw err;
+      }
+      if (!r.ok) throw new Error('local proxy ' + r.status);
       return text;
     },
     async (u) => {
@@ -3454,28 +3493,34 @@
   ];
 
   async function fetchViaProxy(rawUrl, statusText) {
+    const isWebMode = window.location.protocol !== 'file:' && Boolean(window.location.host);
+    // In web mode, only use our own server proxy (PROXIES[0]).
+    // Public CORS proxies are not in CSP connect-src and should not be contacted.
+    const candidateIndices = isWebMode ? [0] : Array.from({ length: PROXIES.length }, (_, i) => i);
+
     // Start from the cached winning proxy (if any) to avoid re-running the full waterfall.
     const cachedMode = _getCachedFetchMode(rawUrl);
-    let order = Array.from({ length: PROXIES.length }, (_, i) => i);
+    let order = candidateIndices;
     if (cachedMode && cachedMode.startsWith('proxy-')) {
       const idx = parseInt(cachedMode.slice(6), 10);
-      if (idx > 0 && idx < PROXIES.length)
+      if (order.includes(idx))
         order = [idx, ...order.filter(i => i !== idx)];
     }
     let cfHits = 0;
     let lastErr = '';
     for (const i of order) {
       try {
-        statusText.textContent = `Trying proxy ${i + 1}/${PROXIES.length}…`;
+        statusText.textContent = isWebMode ? 'Fetching via server proxy…' : `Trying proxy ${i + 1}/${PROXIES.length}…`;
         const html = await Promise.race([
           PROXIES[i](rawUrl),
           new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000)),
         ]);
-        if (isCloudflarePage(html)) { cfHits++; lastErr = 'Cloudflare challenge'; continue; }
+        if (isCloudflarePage(html)) { cfHits++; lastErr = 'Cloudflare challenge'; break; }
         _cacheFetchMode(rawUrl, 'proxy-' + i);
         return html;
       } catch (e) {
         if (e.unauthenticated) throw e;
+        if (e.cfDetected) { cfHits++; lastErr = 'Cloudflare challenge'; break; }
         lastErr = e.message;
       }
     }
@@ -3842,7 +3887,8 @@
       const _skipDirect = _cachedMode && _cachedMode.startsWith('proxy-');
 
       // 2. Direct fetch first (uses the user's own IP — fastest, no CORS on Electron)
-      if (!result && !_skipDirect) {
+      const isWebMode = window.location.protocol !== 'file:' && Boolean(window.location.host);
+      if (!result && !_skipDirect && !isWebMode) {
         try {
           statusText.textContent = 'Trying direct fetch…';
           const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
@@ -4118,7 +4164,7 @@
     logLine(`🔍 "${title}" — AniList`, 'info');
     logLine('⏳ Querying AniList…');
     try {
-      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english}coverImage{large}staff(perPage:1){nodes{name{full}}}description(asHtml:false)genres tags(sort:RANK_DESC){name rank}}}`;
+      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english}coverImage{large}staff(perPage:1){nodes{name{full}}}description(asHtml:false)genres tags{name rank}}}`;
       const res = await Promise.race([
         fetch('https://graphql.anilist.co', {
           method: 'POST',
@@ -4134,7 +4180,10 @@
       const pickedTitle = media.title.english || media.title.romaji || '';
       const author = media.staff?.nodes?.[0]?.name?.full || '';
       const image = media.coverImage?.large || '';
-      const tags = [...(media.genres || []), ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name)];
+      const tags = [
+        ...(media.genres || []),
+        ...(media.tags || []).slice().sort((a,b) => (b.rank||0) - (a.rank||0)).filter(t => t.rank >= 60).map(t => t.name),
+      ];
       if (pickedTitle) { document.getElementById('fTitle').value = pickedTitle; logLine(`📝 Title: ${pickedTitle}`, 'ok'); }
       if (author) { document.getElementById('fAuthor').value = author; logLine(`✍️ Author: ${author}`, 'ok'); }
       if (image) { document.getElementById('fThumb').value = image; previewThumb(); logLine('🖼️ Cover image updated', 'ok'); }
@@ -4159,11 +4208,7 @@
     logLine('⏳ Querying MangaUpdates…');
     try {
       const res = await Promise.race([
-        fetch('https://api.mangaupdates.com/v1/series/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ search: title, perpage: 1 }),
-        }),
+        fetchMangaUpdatesSearch(title),
         new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
       ]);
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -4179,7 +4224,7 @@
       if (seriesId) {
         try {
           const catRes = await Promise.race([
-            fetch(`https://api.mangaupdates.com/v1/series/${seriesId}/categories`),
+            fetchMangaUpdatesCategories(seriesId),
             new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000)),
           ]);
           if (catRes.ok) {
@@ -4357,7 +4402,7 @@
             }
         }
       } else if (site === 'anilist') {
-        const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english}coverImage{large}staff(perPage:1){nodes{name{full}}}genres tags(sort:RANK_DESC){name rank}}}`;
+        const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english}coverImage{large}staff(perPage:1){nodes{name{full}}}genres tags{name rank}}}`;
         const res = await Promise.race([
           fetch('https://graphql.anilist.co', {
             method: 'POST',
@@ -4374,17 +4419,13 @@
               title: media.title.english || media.title.romaji || '',
               author: media.staff?.nodes?.[0]?.name?.full || '',
               image: media.coverImage?.large || '',
-              tags: [...(media.genres || []), ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name)],
+              tags: [...(media.genres || []), ...(media.tags || []).slice().sort((a,b)=>(b.rank||0)-(a.rank||0)).filter(t => t.rank >= 60).map(t => t.name)],
             };
           }
         }
       } else {
         const res = await Promise.race([
-          fetch('https://api.mangaupdates.com/v1/series/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-            body: JSON.stringify({ search: title, perpage: 1 }),
-          }),
+          fetchMangaUpdatesSearch(title),
           new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10000)),
         ]);
         if (res.ok) {
@@ -4660,18 +4701,21 @@
     if (!result) result = await tryHitomi(rawUrl).catch(e => { if (e.notFound || e.unauthenticated) throw e; return null; });
     if (!result) result = await tryAtsu(rawUrl).catch(e => { if (e.notFound || e.unauthenticated) throw e; return null; });
     if (!result) {
-      try {
-        const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
-        const html = await resp.text();
-        if (isCloudflarePage(html)) {
-          const ce = new Error('Cloudflare challenge — skipped in bulk mode');
-          ce.cfDetected = true;
-          throw ce;
+      const isWebMode = window.location.protocol !== 'file:' && Boolean(window.location.host);
+      if (!isWebMode) {
+        try {
+          const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
+          const html = await resp.text();
+          if (isCloudflarePage(html)) {
+            const ce = new Error('Cloudflare challenge — skipped in bulk mode');
+            ce.cfDetected = true;
+            throw ce;
+          }
+          result = { ...parseHtmlMeta(html), url: rawUrl };
+        } catch (directErr) {
+          if (directErr.cfDetected) throw directErr;
+          // CORS / network — fall through to proxies
         }
-        result = { ...parseHtmlMeta(html), url: rawUrl };
-      } catch (directErr) {
-        if (directErr.cfDetected) throw directErr;
-        // CORS / network — fall through to proxies
       }
     }
     if (!result) {
@@ -4695,7 +4739,7 @@
   // For plain names (not URLs): search AniList for title/cover/tags.
   async function fetchEntryDataByName(name) {
     try {
-      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english native}coverImage{large}staff(perPage:1){nodes{name{full}}}genres tags(sort:RANK_DESC){name rank}}}`;
+      const query = `query($s:String){Media(search:$s,type:MANGA,sort:SEARCH_MATCH){title{romaji english native}coverImage{large}staff(perPage:1){nodes{name{full}}}genres tags{name rank}}}`;
       const res = await fetch('https://graphql.anilist.co', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -4709,7 +4753,10 @@
           const title = media.title[lm[settings.lang]] || media.title.english || media.title.romaji || name;
           const image = media.coverImage?.large || '';
           const author = media.staff?.nodes?.[0]?.name?.full || '';
-          const tags = [...(media.genres || []), ...(media.tags || []).filter(t => t.rank >= 60).map(t => t.name)];
+          const tags = [
+            ...(media.genres || []),
+            ...(media.tags || []).slice().sort((a,b) => (b.rank||0) - (a.rank||0)).filter(t => t.rank >= 60).map(t => t.name),
+          ];
           return { title, image, author, description: '', tags, url: '' };
         }
       }
