@@ -108,7 +108,7 @@ if (fs.existsSync(SECRET_FILE)) {
   fs.writeFileSync(SECRET_FILE, SESSION_SECRET, { mode: 0o600 });
 }
 
-const SESSION_TTL_MS = 15 * 60 * 1000; // 15 minutes idle timeout
+const SESSION_TTL_MS = (parseInt(process.env.SESSION_IDLE_MINUTES, 10) || 60) * 60 * 1000; // default 60 minutes idle timeout
 const ABSOLUTE_SESSION_MAX_MS = 7 * 24 * 60 * 60 * 1000; // 7 days absolute maximum session lifetime
 const BCRYPT_ROUNDS  = 12;
 // HTTPS is required by default. Set VLT_HTTPS=false to allow plain HTTP (e.g. during local dev).
@@ -175,6 +175,8 @@ app.use(helmet({
         'https://api.mangaupdates.com',
         'https://nhentai.net',
         'https://hitomi.la',
+        'https://cdn.atsu.moe',
+        'https://atsu.moe',
         'https://cloudflareinsights.com'
       ],
       objectSrc: ["'none'"],
@@ -214,19 +216,20 @@ app.use(session({
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
+  const isApi = (req.path && req.path.startsWith('/api/')) || (req.originalUrl && req.originalUrl.startsWith('/api/'));
   if (req.session?.userId) {
     // Enforce absolute session lifetime (OWASP ASVS 3.3)
     if (req.session.createdAt && (Date.now() - req.session.createdAt > ABSOLUTE_SESSION_MAX_MS)) {
       req.session.destroy(() => {});
-      if (req.accepts('html')) return res.redirect('/login');
-      return res.status(401).json({ error: 'Session expired. Please log in again.' });
+      if (!isApi && req.accepts('html')) return res.redirect('/login');
+      return res.status(401).json({ error: 'Session expired. Please log in again.', sessionExpired: true });
     }
     const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.session.userId);
     if (user) return next();
     req.session.destroy(() => {});
   }
-  if (req.accepts('html')) return res.redirect('/login');
-  res.status(401).json({ error: 'Unauthenticated' });
+  if (!isApi && req.accepts('html')) return res.redirect('/login');
+  res.status(401).json({ error: 'Unauthenticated', sessionExpired: true });
 }
 
 function setupRequired() {
@@ -519,6 +522,53 @@ function sanitizeSettings(obj) {
   return clean;
 }
 
+function sanitizeServerEntry(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = typeof raw.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(raw.id)
+    ? raw.id
+    : crypto.randomBytes(8).toString('hex');
+  const title = String(raw.title || '').trim().slice(0, 500);
+  if (!title) return null;
+  const author = String(raw.author || '').trim().slice(0, 300);
+  const rawLink = String(raw.link || '').trim();
+  const link = /^https?:\/\//i.test(rawLink) ? rawLink.slice(0, 2000) : '';
+  const rawThumb = String(raw.thumb || '').trim();
+  const thumb = (/^(?:https?:\/\/|\/api\/proxy-img\?|data:image\/|blob:)/i.test(rawThumb)) ? rawThumb.slice(0, 4000) : '';
+  const validStatuses = ['reading', 'planning', 'completed', 'paused', 'rereading', 'dropped'];
+  const status = validStatuses.includes(raw.status) ? raw.status : 'planning';
+  const notes = String(raw.notes || '').trim().slice(0, 5000);
+  const validProgressTypes = ['chapters', 'volumes', 'pages'];
+  const progressType = validProgressTypes.includes(raw.progressType) ? raw.progressType : 'chapters';
+  const toIntOrNull = v => (v != null && !isNaN(Number(v)) && Number(v) >= 0) ? Math.min(Math.floor(Number(v)), 999999) : null;
+  const tags = Array.isArray(raw.tags)
+    ? raw.tags.map(t => String(t || '').trim().slice(0, 100)).filter(Boolean).slice(0, 100)
+    : [];
+  const altTitles = Array.isArray(raw.altTitles)
+    ? raw.altTitles.map(t => String(t || '').trim().slice(0, 500)).filter(Boolean).slice(0, 50)
+    : [];
+  const dateAdded = (typeof raw.dateAdded === 'number' && raw.dateAdded > 0) ? raw.dateAdded : Date.now();
+
+  return {
+    id,
+    title,
+    author,
+    link,
+    thumb,
+    status,
+    notes,
+    progressType,
+    chaptersRead: toIntOrNull(raw.chaptersRead),
+    chaptersTotal: toIntOrNull(raw.chaptersTotal),
+    volumesRead: toIntOrNull(raw.volumesRead),
+    volumesTotal: toIntOrNull(raw.volumesTotal),
+    pagesRead: toIntOrNull(raw.pagesRead),
+    pagesTotal: toIntOrNull(raw.pagesTotal),
+    tags,
+    altTitles,
+    dateAdded,
+  };
+}
+
 const handleSaveUserData = (req, res) => {
   const { entries, settings, view } = req.body ?? {};
   if (entries !== undefined && !Array.isArray(entries)) {
@@ -532,7 +582,9 @@ const handleSaveUserData = (req, res) => {
   }
 
   const existing = db.prepare('SELECT entries, settings, view FROM user_data WHERE user_id = ?').get(req.session.userId);
-  const newEntries = entries !== undefined ? JSON.stringify(entries) : (existing?.entries || '[]');
+  const newEntries = entries !== undefined
+    ? JSON.stringify(entries.map(sanitizeServerEntry).filter(Boolean))
+    : (existing?.entries || '[]');
   const newSettings = settings !== undefined ? JSON.stringify(sanitizeSettings(settings)) : (existing?.settings || '{}');
   const newView = view !== undefined ? view : (existing?.view || 'grid');
   const now = Math.floor(Date.now() / 1000);
@@ -667,6 +719,20 @@ function isPrivateIp(ip) {
     return false;
   }
   const clean = ip.toLowerCase().replace(/^\[|\]$/g, '');
+  if (clean.startsWith('::ffff:')) {
+    const rest = clean.slice(7);
+    if (rest.includes('.')) return isPrivateIp(rest);
+    const parts = rest.split(':');
+    if (parts.length === 2) {
+      const p1 = parseInt(parts[0], 16);
+      const p2 = parseInt(parts[1], 16);
+      if (!isNaN(p1) && !isNaN(p2)) {
+        const ip4 = `${(p1 >> 8) & 0xff}.${p1 & 0xff}.${(p2 >> 8) & 0xff}.${p2 & 0xff}`;
+        return isPrivateIp(ip4);
+      }
+    }
+    return true; // Malformed IPv4-mapped IPv6, reject safely
+  }
   if (
     clean === '::1' ||
     clean === '::' ||
@@ -774,8 +840,10 @@ app.get('/api/proxy-img', rateLimitApi, async (req, res) => {
         'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
         // MangaDex CDN checks Referer against mangadex.org, not uploads.mangadex.org
         // Hitomi CDN checks Referer against hitomi.la, not the CDN subdomain
+        // Atsu.moe CDN checks Referer against atsu.moe, not cdn.atsu.moe
         'Referer': /uploads\.mangadex\.org/i.test(url) ? 'https://mangadex.org/'
                  : /gold-usergeneratedcontent\.net/i.test(url) ? 'https://hitomi.la/'
+                 : /cdn\.atsu\.moe/i.test(url) ? 'https://atsu.moe/'
                  : new URL(url).origin + '/',
       },
     });
@@ -859,6 +927,116 @@ app.get('/api/hitomi/:id', rateLimitApi, async (req, res) => {
     res.json({ title: rawTitle, altTitles, author, tags, image, _hitomi: true });
   } catch (e) {
     if (e.status === 404) return res.status(404).json({ error: 'Gallery not found (404)' });
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// ─── Atsu.moe Manga Endpoint ────────────────────────────────────────────────
+// GET /api/atsu/:id — fetches https://atsu.moe/manga/{id} server-side.
+// Extracts window.mangaPage JSON, formats cover image to WebP with proper referer.
+app.get('/api/atsu/:id', rateLimitApi, async (req, res) => {
+  const { id } = req.params;
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ error: 'Invalid ID' });
+  const targetUrl = `https://atsu.moe/manga/${id}`;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    const resp = await fetch(targetUrl, {
+      signal: ctrl.signal,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+          '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    clearTimeout(timer);
+    if (resp.status === 404) return res.status(404).json({ error: 'Manga not found (404)' });
+    if (!resp.ok) return res.status(resp.status).json({ error: `Upstream HTTP ${resp.status}` });
+
+    const html = await resp.text();
+    const m = html.match(/window\.mangaPage\s*=\s*(\{[\s\S]*?\});\s*(?:window\.|<\/script>)/);
+    if (!m) {
+      // Fallback: parse minimal meta tags if window.mangaPage is absent
+      const titleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']*)["']/i);
+      const title = titleMatch ? titleMatch[1].trim() : '';
+      if (!title || title.toLowerCase() === 'atsumaru') return res.status(404).json({ error: 'Manga not found (404)' });
+      const authMatch = html.match(/<meta[^>]*name=["']author["'][^>]*content=["']([^"']*)["']/i);
+      const imgMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']*)["']/i);
+      const descMatch = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i);
+      let img = imgMatch ? imgMatch[1] : '';
+      if (img && !img.startsWith('/api/proxy-img')) {
+        img = `/api/proxy-img?url=${encodeURIComponent(img)}`;
+      }
+      return res.json({
+        title,
+        author: authMatch ? authMatch[1] : '',
+        image: img,
+        description: descMatch ? descMatch[1] : '',
+        tags: [],
+        altTitles: [],
+        chaptersTotal: null,
+        isAdult: false,
+        url: targetUrl,
+        _atsu: true,
+      });
+    }
+
+    const data = JSON.parse(m[1]).mangaPage || {};
+    const prefLang = req.query.lang || 'en';
+    const rawTitle = (prefLang === 'en' && data.englishTitle) ? data.englishTitle : (data.title || data.englishTitle || '');
+    const title = rawTitle.split(/[|｜]/)[0].trim();
+
+    // Deduplicate author / artist names
+    const authorNames = (data.authors || [])
+      .map(a => (a.name || '').trim())
+      .filter(Boolean);
+    const author = [...new Set(authorNames)].join(', ');
+
+    // Tags & genres
+    const genreNames = (data.genres || []).map(g => (g.name || '').trim()).filter(Boolean);
+    const tagNames = (data.tags || []).map(t => (t.name || '').trim()).filter(Boolean);
+    const tags = [...new Set([...genreNames, ...tagNames])];
+
+    // Alt titles
+    const otherNames = (data.otherNames || []).map(t => (t || '').trim()).filter(Boolean);
+    const altSet = new Set(otherNames);
+    if (data.englishTitle && data.englishTitle.trim() !== title) altSet.add(data.englishTitle.trim());
+    if (data.title && data.title.trim() !== title) altSet.add(data.title.trim());
+    const altTitles = [...altSet].filter(t => t !== title).slice(0, 25);
+
+    // Cover image — convert .avif to .webp for universal compatibility
+    const p = data.poster || {};
+    const relPoster = (p.largeImage || p.mediumImage || p.image || '').replace(/\.avif$/i, '.webp');
+    let image = '';
+    if (relPoster) {
+      const cdnUrl = relPoster.startsWith('http')
+        ? relPoster
+        : `https://cdn.atsu.moe/static/${relPoster.replace(/^\/+/, '')}`;
+      image = `/api/proxy-img?url=${encodeURIComponent(cdnUrl)}`;
+    }
+
+    const description = data.synopsis || '';
+    const chaptersTotal = data.totalChapterCount != null
+      ? data.totalChapterCount
+      : (Array.isArray(data.chapters) ? data.chapters.length : null);
+    const isAdult = !!data.isAdult;
+
+    res.json({
+      title,
+      author,
+      image,
+      description,
+      tags,
+      altTitles,
+      chaptersTotal,
+      isAdult,
+      url: targetUrl,
+      _atsu: true,
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') return res.status(504).json({ error: 'Request timed out' });
     res.status(502).json({ error: e.message });
   }
 });

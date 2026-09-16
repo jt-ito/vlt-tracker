@@ -1520,7 +1520,7 @@
       <p class="import-hint">Paste a manga page URL. The app will try to pull the cover image, title, and author from the page’s metadata via a CORS proxy. Results vary by site &mdash; you can always edit the fields after importing.</p>
       <div class="field">
         <label>URL</label>
-        <input type="url" id="importUrl" placeholder="https://mangadex.org/title/…" />
+        <input type="url" id="importUrl" placeholder="https://mangadex.org/title/… or https://atsu.moe/manga/…" />
       </div>
       <div class="import-status hidden" id="importStatus">
         <div class="import-spinner"></div>
@@ -1869,15 +1869,21 @@
     if (!thumbUrl) return false;
     try {
       let blob;
+      const directUrl = thumbUrl.startsWith('/api/proxy-img?url=')
+        ? decodeURIComponent(thumbUrl.slice(19))
+        : thumbUrl;
       // Try direct fetch first (works in Electron; may be CORS-blocked in web mode)
       try {
-        const r = await fetch(thumbUrl, { signal: AbortSignal.timeout(10000) });
+        const r = await fetch(directUrl, { signal: AbortSignal.timeout(10000) });
         if (r.ok) blob = await r.blob();
       } catch (_) {}
       // Fall back to server-side image proxy (handles CORS for web/Docker mode)
       if (!blob) {
         try {
-          const r = await fetch('/api/proxy-img?url=' + encodeURIComponent(thumbUrl),
+          const proxyUrl = thumbUrl.startsWith('/api/proxy-img')
+            ? thumbUrl
+            : '/api/proxy-img?url=' + encodeURIComponent(thumbUrl);
+          const r = await fetch(proxyUrl,
             { signal: AbortSignal.timeout(15000) });
           if (r.ok) blob = await r.blob();
         } catch (_) {}
@@ -2057,7 +2063,7 @@
           </span>
           ${u.id !== currentUser.id
             ? `<button class="btn btn-ghost" style="font-size:0.78rem;padding:3px 8px;color:var(--danger);flex-shrink:0"
-                 onclick="deleteAccount(${u.id},'${escHtml(u.username).replace(/'/g,"\\'")}')">Delete</button>`
+                 onclick="deleteAccount(${Number(u.id)}, ${escHtml(JSON.stringify(u.username))})">Delete</button>`
             : '<span style="font-size:0.78rem;color:var(--text-muted);flex-shrink:0">(you)</span>'}
         </div>
       `).join('');
@@ -2262,12 +2268,16 @@
     const body = _pendingSync;
     _pendingSync = null;
     try {
-      await fetch('/api/data', {
+      const res = await fetch('/api/data', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
         keepalive: true,
       });
+      if (res.status === 401) {
+        handleSessionExpired();
+        _pendingSync = { ...body, ...(_pendingSync || {}) };
+      }
     } catch (_) {
       // Re-queue on network error
       _pendingSync = { ...body, ...(_pendingSync || {}) };
@@ -2427,11 +2437,77 @@
     document.getElementById('pagesField2').classList.toggle('hidden', !isPages);
   }
 
+  function resolveThumbUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    if (url.startsWith('/api/proxy-img?url=') && (window.location.protocol === 'file:' || !window.location.host)) {
+      try { return decodeURIComponent(url.slice(19)); } catch (_) {}
+    }
+    return url;
+  }
+
+  function safeImgSrc(url) {
+    if (!url || typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    if (/^(?:https?:\/\/|\/api\/proxy-img\?|data:image\/|blob:)/i.test(trimmed)) {
+      return escHtml(trimmed);
+    }
+    return '';
+  }
+
+  function sanitizeEntry(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const id = typeof raw.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(raw.id)
+      ? raw.id
+      : Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const title = String(raw.title || '').trim().slice(0, 500);
+    if (!title) return null;
+    const author = String(raw.author || '').trim().slice(0, 300);
+    const rawLink = String(raw.link || '').trim();
+    const link = /^https?:\/\//i.test(rawLink) ? rawLink.slice(0, 2000) : '';
+    const rawThumb = String(raw.thumb || '').trim();
+    const thumb = (/^(?:https?:\/\/|\/api\/proxy-img\?|data:image\/|blob:)/i.test(rawThumb)) ? rawThumb.slice(0, 4000) : '';
+    const validStatuses = ['reading', 'planning', 'completed', 'paused', 'rereading', 'dropped'];
+    const status = validStatuses.includes(raw.status) ? raw.status : 'planning';
+    const notes = String(raw.notes || '').trim().slice(0, 5000);
+    const validProgressTypes = ['chapters', 'volumes', 'pages'];
+    const progressType = validProgressTypes.includes(raw.progressType) ? raw.progressType : 'chapters';
+    const toIntOrNull = v => (v != null && !isNaN(Number(v)) && Number(v) >= 0) ? Math.min(Math.floor(Number(v)), 999999) : null;
+    const tags = Array.isArray(raw.tags)
+      ? raw.tags.map(t => String(t || '').trim().slice(0, 100)).filter(Boolean).slice(0, 100)
+      : [];
+    const altTitles = Array.isArray(raw.altTitles)
+      ? raw.altTitles.map(t => String(t || '').trim().slice(0, 500)).filter(Boolean).slice(0, 50)
+      : [];
+    const dateAdded = (typeof raw.dateAdded === 'number' && raw.dateAdded > 0) ? raw.dateAdded : Date.now();
+
+    return {
+      id,
+      title,
+      author,
+      link,
+      thumb,
+      status,
+      notes,
+      progressType,
+      chaptersRead: toIntOrNull(raw.chaptersRead),
+      chaptersTotal: toIntOrNull(raw.chaptersTotal),
+      volumesRead: toIntOrNull(raw.volumesRead),
+      volumesTotal: toIntOrNull(raw.volumesTotal),
+      pagesRead: toIntOrNull(raw.pagesRead),
+      pagesTotal: toIntOrNull(raw.pagesTotal),
+      tags,
+      altTitles,
+      dateAdded,
+    };
+  }
+
   function previewThumb() {
-    const url = document.getElementById('fThumb').value.trim();
+    const rawUrl = document.getElementById('fThumb').value.trim();
     const preview = document.getElementById('thumbPreview');
-    if (url) {
-      preview.innerHTML = `<img src="${escHtml(url)}" onerror="this.parentElement.innerHTML='📖'" alt="thumb" />`;
+    const url = resolveThumbUrl(rawUrl);
+    const safe = safeImgSrc(url);
+    if (safe) {
+      preview.innerHTML = `<img src="${safe}" onerror="this.parentElement.innerHTML='📖'" alt="thumb" />`;
     } else {
       preview.innerHTML = '📖';
     }
@@ -2470,25 +2546,26 @@
       }
     }
 
-    const entry = {
-      id: editingId || Date.now().toString(),
+    const entry = sanitizeEntry({
+      id: editingId || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6)),
       title,
-      author: document.getElementById('fAuthor').value.trim(),
+      author: document.getElementById('fAuthor').value,
       link,
-      thumb: document.getElementById('fThumb').value.trim(),
+      thumb: document.getElementById('fThumb').value,
       status: document.getElementById('fStatus').value,
-      notes: document.getElementById('fNotes').value.trim(),
+      notes: document.getElementById('fNotes').value,
       progressType,
-      chaptersRead: progressType === 'chapters' ? (parseInt(document.getElementById('fChaptersRead').value) || null) : null,
-      chaptersTotal: progressType === 'chapters' ? (parseInt(document.getElementById('fChaptersTotal').value) || null) : null,
-      volumesRead: progressType === 'volumes' ? (parseInt(document.getElementById('fVolumesRead').value) || null) : null,
-      volumesTotal: progressType === 'volumes' ? (parseInt(document.getElementById('fVolumesTotal').value) || null) : null,
-      pagesRead: progressType === 'pages' ? (parseInt(document.getElementById('fPagesRead').value) || null) : null,
-      pagesTotal: progressType === 'pages' ? (parseInt(document.getElementById('fPagesTotal').value) || null) : null,
+      chaptersRead: document.getElementById('fChaptersRead').value,
+      chaptersTotal: document.getElementById('fChaptersTotal').value,
+      volumesRead: document.getElementById('fVolumesRead').value,
+      volumesTotal: document.getElementById('fVolumesTotal').value,
+      pagesRead: document.getElementById('fPagesRead').value,
+      pagesTotal: document.getElementById('fPagesTotal').value,
       tags: document.getElementById('fTags').value.split(',').map(t => t.trim()).filter(Boolean),
       altTitles: altTitlesState.length ? [...altTitlesState] : [],
       dateAdded: editingId ? (entries.find(e => e.id === editingId)?.dateAdded || Date.now()) : Date.now(),
-    };
+    });
+    if (!entry) return;
 
     if (editingId) {
       const idx = entries.findIndex(e => e.id === editingId);
@@ -2537,34 +2614,41 @@
   }
 
   function progressLabel(entry) {
+    const toNumOrNull = v => (v != null && !isNaN(Number(v)) && Number(v) >= 0) ? Math.min(Math.floor(Number(v)), 999999) : null;
     if (entry.progressType === 'volumes') {
-      const r = entry.volumesRead != null ? entry.volumesRead : '–';
-      const t = entry.volumesTotal != null ? entry.volumesTotal : '?';
-      return `Vol. ${r} / ${t}`;
+      const r = toNumOrNull(entry.volumesRead) ?? '–';
+      const t = toNumOrNull(entry.volumesTotal) ?? '?';
+      return escHtml(`Vol. ${r} / ${t}`);
     } else if (entry.progressType === 'pages') {
-      const r = entry.pagesRead != null ? entry.pagesRead : '–';
-      const t = entry.pagesTotal != null ? entry.pagesTotal : '?';
-      return r !== '–' || t !== '?' ? `Pg. ${r} / ${t}` : '';
+      const r = toNumOrNull(entry.pagesRead) ?? '–';
+      const t = toNumOrNull(entry.pagesTotal) ?? '?';
+      return (r !== '–' || t !== '?') ? escHtml(`Pg. ${r} / ${t}`) : '';
     } else {
-      const r = entry.chaptersRead != null ? entry.chaptersRead : '–';
-      const t = entry.chaptersTotal != null ? entry.chaptersTotal : '?';
-      return r !== '–' || t !== '?' ? `Ch. ${r} / ${t}` : '';
+      const r = toNumOrNull(entry.chaptersRead) ?? '–';
+      const t = toNumOrNull(entry.chaptersTotal) ?? '?';
+      return (r !== '–' || t !== '?') ? escHtml(`Ch. ${r} / ${t}`) : '';
     }
   }
 
   function thumbHtml(entry, size = 'sm') {
     const cached = imageCacheMap.get(storeKey(entry.id));
     if (cached) {
-      return `<img src="${cached}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />`;
+      const safe = safeImgSrc(cached);
+      if (safe) return `<img src="${safe}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />`;
     }
     if (entry.thumb) {
-      return `<img src="${escHtml(entry.thumb)}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />`;
+      const src = resolveThumbUrl(entry.thumb);
+      const safe = safeImgSrc(src);
+      if (safe) return `<img src="${safe}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />`;
     }
     return '📖';
   }
 
   function statusPill(status, extraClass = '') {
-    return `<span class="status-pill s-${status} ${extraClass}">${STATUS_LABELS[status] || status}</span>`;
+    const valid = STATUS_LABELS[status] ? status : 'planning';
+    const label = STATUS_LABELS[valid] || 'Plan to Read';
+    const safeExtra = extraClass ? ' ' + escHtml(extraClass) : '';
+    return `<span class="status-pill s-${valid}${safeExtra}">${escHtml(label)}</span>`;
   }
 
   // ── Tag filter state ──
@@ -2695,9 +2779,9 @@
     if (event.button !== 1 || !settings.middleClickLink) return;
     if (event.target.closest('a') || event.target.closest('button')) return;
     const entry = entries.find(e => e.id === id);
-    if (!entry?.link) return;
+    if (!entry?.link || !/^https?:\/\//i.test(entry.link.trim())) return;
     event.preventDefault();
-    window.open(entry.link, '_blank', 'noopener,noreferrer');
+    window.open(entry.link.trim(), '_blank', 'noopener,noreferrer');
   }
 
   function handleCardMouseDown(event) {
@@ -2709,7 +2793,7 @@
 
   function renderList(filtered, container) {
     container.innerHTML = `<div class="entries-list">${filtered.map(e => `
-      <div class="entry-card" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')" onmousedown="handleCardMouseDown(event)">
+      <div class="entry-card" onclick="openModal(${escHtml(JSON.stringify(e.id))})" onauxclick="handleCardAuxClick(event,${escHtml(JSON.stringify(e.id))})" onmousedown="handleCardMouseDown(event)">
         <div class="entry-thumb-sm">${thumbHtml(e)}</div>
         <div class="entry-info">
           <div class="entry-title">${escHtml(e.title)}</div>
@@ -2724,16 +2808,16 @@
           ${e.tags?.length ? `<div class="entry-tags">${e.tags.slice(0,8).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('')}</div>` : ''}
         </div>
         <div class="entry-site-btns" onclick="event.stopPropagation()">
-          <button class="btn-site" onclick="lookupOnSite('anilist', ${escHtml(JSON.stringify(e.title))}, '${e.id}')" title="Lookup on AniList">
+          <button class="btn-site" onclick="lookupOnSite('anilist', ${escHtml(JSON.stringify(e.title))}, ${escHtml(JSON.stringify(e.id))})" title="Lookup on AniList">
             <img class="site-logo" src="https://anilist.co/img/icons/favicon-32x32.png" onerror="this.replaceWith('🟣')" alt="AniList" />
             <span class="site-label">AniList</span>
           </button>
-          <button class="btn-site" onclick="lookupOnSite('mangaupdates', ${escHtml(JSON.stringify(e.title))}, '${e.id}')" title="Lookup on MangaUpdates">
+          <button class="btn-site" onclick="lookupOnSite('mangaupdates', ${escHtml(JSON.stringify(e.title))}, ${escHtml(JSON.stringify(e.id))})" title="Lookup on MangaUpdates">
             <img class="site-logo" src="https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fencrypted-tbn0.gstatic.com%2Fimages%3Fq%3Dtbn%3AANd9GcQ8HPq8qdXYifvxu8XdsbuSiE4vjlLYw4k8kg%26s&f=1&nofb=1&ipt=67a46636722a9f680f9045b6fcaeeb7fe531f49d12494b4f03fd638bf1b31d08" onerror="this.style.display='none'" alt="MangaUpdates" style="border-radius:3px" />
             <span class="site-label">MangaUpd</span>
           </button>
-          ${!(e.link && (e.link.includes('nhentai.net') || /^\\d+$/.test(e.link))) ? `
-          <button class="btn-site" onclick="lookupOnSite('nhentai', ${escHtml(JSON.stringify(e.title))}, '${e.id}')" title="Lookup on NH">
+          ${!(e.link && (e.link.includes('nhentai.net') || /^\d+$/.test(e.link))) ? `
+          <button class="btn-site" onclick="lookupOnSite('nhentai', ${escHtml(JSON.stringify(e.title))}, ${escHtml(JSON.stringify(e.id))})" title="Lookup on NH">
             <span class="site-logo" style="font-size:18px;display:flex;align-items:center;justify-content:center;background:#ED2553;color:white;border-radius:5px;font-weight:bold;padding-bottom:2px">N</span>
             <span class="site-label">NHentai</span>
           </button>
@@ -2744,7 +2828,7 @@
 
   function renderCompact(filtered, container) {
     container.innerHTML = `<div class="entries-compact">${filtered.map(e => `
-      <div class="entry-compact-row" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')" onmousedown="handleCardMouseDown(event)">
+      <div class="entry-compact-row" onclick="openModal(${escHtml(JSON.stringify(e.id))})" onauxclick="handleCardAuxClick(event,${escHtml(JSON.stringify(e.id))})" onmousedown="handleCardMouseDown(event)">
         <div class="compact-title">${escHtml(e.title)}</div>
         <div class="compact-author">${e.author ? escHtml(e.author) : '<span style="color:var(--text-muted);font-style:italic">Unknown</span>'}</div>
         <div class="compact-status">${statusPill(e.status)}</div>
@@ -2754,7 +2838,7 @@
 
   function renderGrid(filtered, container) {
     container.innerHTML = `<div class="entries-grid">${filtered.map(e => `
-      <div class="entry-grid-card" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')" onmousedown="handleCardMouseDown(event)">
+      <div class="entry-grid-card" onclick="openModal(${escHtml(JSON.stringify(e.id))})" onauxclick="handleCardAuxClick(event,${escHtml(JSON.stringify(e.id))})" onmousedown="handleCardMouseDown(event)">
         <div class="entry-thumb-lg">
           ${thumbHtml(e, 'lg')}
           <span class="status-pill thumb-status s-${e.status}">${STATUS_LABELS[e.status]}</span>
@@ -2771,7 +2855,7 @@
 
   function renderLinks(filtered, container) {
     container.innerHTML = `<div class="entries-links">${filtered.map(e => `
-      <div class="entry-link-row" onclick="openModal('${e.id}')" onauxclick="handleCardAuxClick(event,'${e.id}')" onmousedown="handleCardMouseDown(event)">
+      <div class="entry-link-row" onclick="openModal(${escHtml(JSON.stringify(e.id))})" onauxclick="handleCardAuxClick(event,${escHtml(JSON.stringify(e.id))})" onmousedown="handleCardMouseDown(event)">
         ${statusPill(e.status)}
         <div class="link-main">
           <div class="link-title">
@@ -2872,6 +2956,11 @@
     let info = null;
     try {
       const res = await fetch(`/api/hitomi/${id}`, { signal: AbortSignal.timeout(20000) });
+      if (res.status === 401) {
+        const e = new Error('Session expired. Please log in again.');
+        e.unauthenticated = true;
+        throw e;
+      }
       if (res.status === 404) {
         const e = new Error('Gallery not found (404)');
         e.notFound = true;
@@ -2879,7 +2968,7 @@
       }
       if (res.ok) info = await res.json();
     } catch (e) {
-      if (e.notFound) throw e;
+      if (e.notFound || e.unauthenticated) throw e;
     }
 
     // Fallback: direct fetch for Electron (Chromium may handle SNI differently)
@@ -2961,8 +3050,15 @@
       try {
         const res = await fetch('/api/proxy?url=' + encodeURIComponent(apiUrl),
           { signal: AbortSignal.timeout(12000) });
+        if (res.status === 401) {
+          const e = new Error('Session expired. Please log in again.');
+          e.unauthenticated = true;
+          throw e;
+        }
         if (res.ok) json = JSON.parse(await res.text());
-      } catch (_) {}
+      } catch (e) {
+        if (e.unauthenticated) throw e;
+      }
     }
     if (!json?.data) throw new Error('MangaDex: no data');
 
@@ -3022,6 +3118,14 @@
     //    Returns 401 if no key saved, or network error in Electron — fall through.
     try {
       const res = await fetch(`/api/nh/${id}`, { signal: AbortSignal.timeout(20000) });
+      if (res.status === 401) {
+        const errJson = await res.json().catch(() => ({}));
+        if (errJson.sessionExpired) {
+          const e = new Error('Session expired. Please log in again.');
+          e.unauthenticated = true;
+          throw e;
+        }
+      }
       if (res.status === 404) {
         const e = new Error('Gallery not found (404)');
         e.notFound = true;
@@ -3041,7 +3145,9 @@
           };
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      if (e.notFound || e.unauthenticated) throw e;
+    }
 
     // 2. Direct fetch (Electron — no CORS; may work if IP not CF-blocked)
     let json;
@@ -3059,11 +3165,18 @@
       try {
         const res = await fetch('/api/proxy?url=' + encodeURIComponent(`https://nhentai.net/api/gallery/${id}`),
           { signal: AbortSignal.timeout(10000) });
+        if (res.status === 401) {
+          const e = new Error('Session expired. Please log in again.');
+          e.unauthenticated = true;
+          throw e;
+        }
         if (res.ok) {
           const text = await res.text();
           if (!isCloudflarePage(text)) json = JSON.parse(text);
         }
-      } catch (_) {}
+      } catch (e) {
+        if (e.unauthenticated) throw e;
+      }
     }
     if (!json?.id) return null;
 
@@ -3116,6 +3229,100 @@
     const allTitles = [media.title.romaji, media.title.english, media.title.native].filter(Boolean);
     const altTitles = allTitles.filter(t => t !== title).filter((t, i, arr) => arr.indexOf(t) === i);
     return { title, author, image, description, tags, altTitles, url };
+  }
+
+  async function tryAtsu(url) {
+    // Match atsu.moe/(?:manga|read)/<id>
+    const m = url.match(/atsu\.moe\/(?:manga|read)\/([a-zA-Z0-9_-]+)/i);
+    if (!m) return null;
+    const id = m[1];
+
+    // 1. Try server-side endpoint first (/api/atsu/:id)
+    let info = null;
+    try {
+      const res = await fetch(`/api/atsu/${id}`, { signal: AbortSignal.timeout(15000) });
+      if (res.status === 401) { const e = new Error('Session expired. Please log in again.'); e.unauthenticated = true; throw e; }
+      if (res.status === 404) { const e = new Error('Manga not found on atsu.moe'); e.notFound = true; throw e; }
+      if (res.ok) info = await res.json();
+    } catch (e) {
+      if (e.notFound || e.unauthenticated) throw e;
+    }
+
+    // 2. Standalone fallback (Electron with no server running or client-side fetch)
+    if (!info) {
+      let html = '';
+      const atsuUrl = `https://atsu.moe/manga/${id}`;
+      try {
+        const resp = await fetch(atsuUrl, { signal: AbortSignal.timeout(10000) });
+        if (resp.ok) html = await resp.text();
+      } catch (_) {}
+      if (!html) {
+        try {
+          const resp = await fetch('/api/proxy?url=' + encodeURIComponent(atsuUrl), { signal: AbortSignal.timeout(12000) });
+          if (resp.status === 401) { const e = new Error('Session expired. Please log in again.'); e.unauthenticated = true; throw e; }
+          if (resp.ok) html = await resp.text();
+        } catch (e) {
+          if (e.unauthenticated) throw e;
+        }
+      }
+
+      if (html) {
+        const pageMatch = html.match(/window\.mangaPage\s*=\s*(\{[\s\S]*?\});\s*(?:window\.|<\/script>)/);
+        if (pageMatch) {
+          try {
+            const data = JSON.parse(pageMatch[1]).mangaPage || {};
+            const prefLang = settings.lang || 'en';
+            const rawTitle = (prefLang === 'en' && data.englishTitle) ? data.englishTitle : (data.title || data.englishTitle || '');
+            const title = pickTitle(rawTitle);
+            const authorNames = (data.authors || []).map(a => (a.name || '').trim()).filter(Boolean);
+            const author = [...new Set(authorNames)].join(', ');
+            const genres = (data.genres || []).map(g => (g.name || '').trim()).filter(Boolean);
+            const tagsList = (data.tags || []).map(t => (t.name || '').trim()).filter(Boolean);
+            const tags = [...new Set([...genres, ...tagsList])];
+            const otherNames = (data.otherNames || []).map(t => (t || '').trim()).filter(Boolean);
+            const altSet = new Set(otherNames);
+            if (data.englishTitle && data.englishTitle.trim() !== title) altSet.add(data.englishTitle.trim());
+            if (data.title && data.title.trim() !== title) altSet.add(data.title.trim());
+            const altTitles = [...altSet].filter(t => t !== title).slice(0, 25);
+
+            const p = data.poster || {};
+            const relPoster = (p.largeImage || p.mediumImage || p.image || '').replace(/\.avif$/i, '.webp');
+            let image = '';
+            if (relPoster) {
+              const cdnUrl = relPoster.startsWith('http')
+                ? relPoster
+                : `https://cdn.atsu.moe/static/${relPoster.replace(/^\/+/, '')}`;
+              image = (window.location.protocol === 'file:' || !window.location.host)
+                ? cdnUrl
+                : `/api/proxy-img?url=${encodeURIComponent(cdnUrl)}`;
+            }
+            const description = data.synopsis || '';
+            const chaptersTotal = data.totalChapterCount != null
+              ? data.totalChapterCount
+              : (Array.isArray(data.chapters) ? data.chapters.length : null);
+            info = { title, author, image, description, tags, altTitles, chaptersTotal, url: atsuUrl, _atsu: true };
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (!info) return null;
+
+    let image = info.image || '';
+    if (image && (window.location.protocol === 'file:' || !window.location.host) && image.startsWith('/api/proxy-img?url=')) {
+      try { image = decodeURIComponent(image.slice(19)); } catch (_) {}
+    }
+
+    return {
+      title: info.title || '',
+      author: info.author || '',
+      image,
+      description: info.description || '',
+      tags: info.tags || [],
+      altTitles: info.altTitles || [],
+      chaptersTotal: info.chaptersTotal || null,
+      url: info.url || url,
+    };
   }
 
   async function searchAniListTags(title) {
@@ -3192,6 +3399,13 @@
     } catch (_) { return null; }
   }
 
+  function isLoginPage(html) {
+    if (!html || typeof html !== 'string') return false;
+    return html.includes('<title>VLT Tracker — Login</title>') ||
+           html.includes('id="login-form"') ||
+           (html.includes('VLT Tracker') && html.includes('/api/auth/login'));
+  }
+
   // ── CORS proxy waterfall ──────────────────────────────────────────────────
   // Tries multiple proxies in order; first success wins.
   const PROXIES = [
@@ -3199,10 +3413,21 @@
     async (u) => {
       const r = await fetch('/api/proxy?url=' + encodeURIComponent(u),
         { signal: AbortSignal.timeout(12000) });
+      if (r.status === 401) {
+        const err = new Error('Session expired. Please log in again.');
+        err.unauthenticated = true;
+        throw err;
+      }
       // 404 means we're not running the local server — skip silently
       if (r.status === 404 || r.status === 0) throw new Error('no local server');
       if (!r.ok) throw new Error('local proxy ' + r.status);
-      return r.text();
+      const text = await r.text();
+      if (isLoginPage(text)) {
+        const err = new Error('Session expired. Please log in again.');
+        err.unauthenticated = true;
+        throw err;
+      }
+      return text;
     },
     async (u) => {
       const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(u));
@@ -3250,6 +3475,7 @@
         _cacheFetchMode(rawUrl, 'proxy-' + i);
         return html;
       } catch (e) {
+        if (e.unauthenticated) throw e;
         lastErr = e.message;
       }
     }
@@ -3261,6 +3487,11 @@
   }
 
   function parseHtmlMeta(html) {
+    if (isLoginPage(html)) {
+      const err = new Error('Session expired. Please log in again.');
+      err.unauthenticated = true;
+      throw err;
+    }
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
     const getMeta = (...props) => {
@@ -3291,6 +3522,12 @@
     // Require space on both sides of bare dash so we don't match hyphens inside words
     // (e.g. the old regex would match "-Hentai" in "E-Hentai Galleries" and leave "- E" dangling).
     title = title.replace(/\s+[-\u2013\u2014]\s+.{1,35}$|\s*[|\u2014]\s*.{1,35}$/, '').trim();
+    // Guard against login page title after suffix stripping
+    if (title === 'VLT Tracker' || title === 'VLT Tracker — Login') {
+      const err = new Error('Session expired. Please log in again.');
+      err.unauthenticated = true;
+      throw err;
+    }
     // Strip known site-name suffixes
     const TITLE_STRIP_SUFFIXES = [
       '- Free Hentai Comics Online',
@@ -3318,11 +3555,17 @@
     // dedicated handlers (MangaDex, AniList) that never reach this code path.
     title = title.replace(/(\s*\([^)]+\))+$/, '').trim();
     let image = getMeta('og:image', 'twitter:image');
+    // Prefer actual poster over banners (e.g. on atsu.moe banners are listed before posters in og:image)
+    const _atsuPoster = doc.querySelector('meta[property="og:image"][content*="/posters/"]')?.getAttribute('content');
+    if (_atsuPoster) image = _atsuPoster;
     // Prefer actual thumbnail over low-quality opengraph variant.
     // niyaniya.moe (and nozomi.la) serve `nozomi.erocdn.net/opengraph/…` as og:image
     // but a full-resolution thumbnail is available in the cover <img> element.
     const _nozomiThumb = doc.querySelector('img[src*="nozomi.erocdn.net/thumbnail"], img[src*="erocdn.net/thumbnail"]');
     if (_nozomiThumb) { const _s = _nozomiThumb.getAttribute('src') || ''; if (_s) image = _s; }
+    if (image && /cdn\.atsu\.moe/i.test(image) && window.location.protocol !== 'file:' && window.location.host && !image.startsWith('/api/proxy-img')) {
+      image = `/api/proxy-img?url=${encodeURIComponent(image)}`;
+    }
     const description = getMeta('og:description', 'twitter:description', 'description');
 
     let author = '';
@@ -3510,7 +3753,50 @@
       } catch {}
     }
 
-    return { title, image, description, author, tags, altTitles };
+    let chaptersTotal = null;
+    const _mangaPageMatch = html.match(/window\.mangaPage\s*=\s*(\{[\s\S]*?\});\s*(?:window\.|<\/script>)/);
+    if (_mangaPageMatch) {
+      try {
+        const mp = JSON.parse(_mangaPageMatch[1]).mangaPage || {};
+        const prefLang = settings.lang || 'en';
+        const rawT = (prefLang === 'en' && mp.englishTitle) ? mp.englishTitle : (mp.title || mp.englishTitle || '');
+        if (rawT) title = pickTitle(rawT);
+        if (Array.isArray(mp.authors) && mp.authors.length) {
+          const names = mp.authors.map(a => (a.name || '').trim()).filter(Boolean);
+          if (names.length) author = [...new Set(names)].join(', ');
+        }
+        if (mp.synopsis && !description) description = mp.synopsis;
+        if (Array.isArray(mp.otherNames)) {
+          for (const on of mp.otherNames) {
+            const v = cleanStr(on);
+            if (v && v !== title && !altTitles.includes(v)) altTitles.push(v);
+          }
+        }
+        if (mp.englishTitle && mp.englishTitle !== title && !altTitles.includes(mp.englishTitle)) {
+          altTitles.push(mp.englishTitle);
+        }
+        const gNames = (mp.genres || []).map(g => cleanStr(g.name)).filter(Boolean);
+        const tNames = (mp.tags || []).map(t => cleanStr(t.name)).filter(Boolean);
+        for (const t of [...gNames, ...tNames]) {
+          if (t && !tags.includes(t)) tags.push(t);
+        }
+        const p = mp.poster || {};
+        const rel = (p.largeImage || p.mediumImage || p.image || '').replace(/\.avif$/i, '.webp');
+        if (rel) {
+          const cdn = rel.startsWith('http') ? rel : `https://cdn.atsu.moe/static/${rel.replace(/^\/+/, '')}`;
+          image = (window.location.protocol === 'file:' || !window.location.host)
+            ? cdn
+            : `/api/proxy-img?url=${encodeURIComponent(cdn)}`;
+        }
+        if (mp.totalChapterCount != null) {
+          chaptersTotal = mp.totalChapterCount;
+        } else if (Array.isArray(mp.chapters)) {
+          chaptersTotal = mp.chapters.length;
+        }
+      } catch (_) {}
+    }
+
+    return { title, image, description, author, tags, altTitles, chaptersTotal };
   }
 
   // ── Main scrape entry point ──────────────────────────────────────────────
@@ -3538,10 +3824,11 @@
 
       // 1. Try known-site APIs first (no CF involved)
       statusText.textContent = 'Checking for official API…';
-      result = await tryMangaDex(rawUrl).catch(() => null);
-      if (!result) result = await tryNH(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
-      if (!result) result = await tryAniList(rawUrl).catch(() => null);
-      if (!result) result = await tryHitomi(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
+      result = await tryMangaDex(rawUrl).catch(e => { if (e.unauthenticated) throw e; return null; });
+      if (!result) result = await tryNH(rawUrl).catch(e => { if (e.notFound || e.unauthenticated) throw e; return null; });
+      if (!result) result = await tryAniList(rawUrl).catch(e => { if (e.unauthenticated) throw e; return null; });
+      if (!result) result = await tryHitomi(rawUrl).catch(e => { if (e.notFound || e.unauthenticated) throw e; return null; });
+      if (!result) result = await tryAtsu(rawUrl).catch(e => { if (e.notFound || e.unauthenticated) throw e; return null; });
 
       // Use session cache to skip approaches that are known to fail for this host.
       const _cachedMode = _getCachedFetchMode(rawUrl);
@@ -3601,7 +3888,14 @@
       showImportPreview(result, rawUrl);
     } catch (err) {
       statusEl.classList.add('hidden');
-      if (err.notFound) {
+      if (err.unauthenticated) {
+        statusEl.classList.remove('hidden');
+        statusText.innerHTML = '⚠️ <strong>Session expired.</strong> Please <a href="/login" style="color:var(--accent,#6366f1);text-decoration:underline;">log in again</a>.';
+        btn.disabled = false;
+        btn.textContent = 'Log In';
+        btn.onclick = () => { window.location.href = '/login'; };
+        handleSessionExpired();
+      } else if (err.notFound) {
         statusEl.classList.remove('hidden');
         statusText.textContent = '❌ Gallery not found — this ID does not exist on nhentai';
         btn.disabled = false;
@@ -3807,7 +4101,7 @@
       return;
     }
     el.innerHTML = tags.map(t =>
-      `<span class="tag-pill-rm">${escHtml(t)}<span class="rm-x" title="Remove" onclick="removeTag(${JSON.stringify(t)})">×</span></span>`
+      `<span class="tag-pill-rm">${escHtml(t)}<span class="rm-x" title="Remove" onclick="removeTag(${escHtml(JSON.stringify(t))})">×</span></span>`
     ).join('');
   }
 
@@ -4236,15 +4530,18 @@
   }
 
   function showImportPreview(result, url) {
-    const { title = '', image = '', author = '', description = '', tags = [], altTitles = [] } = result;
+    const { title = '', image = '', author = '', description = '', tags = [], altTitles = [], chaptersTotal = null } = result;
+    const resolvedImg = resolveThumbUrl(image);
+    const safeImg = safeImgSrc(resolvedImg);
     const rThumb = document.getElementById('importResultThumb');
-    rThumb.innerHTML = image
-      ? `<img src="${escHtml(image)}" onerror="this.parentElement.innerHTML='\ud83d\udcd6'" alt="cover" />`
-      : '\ud83d\udcd6';
+    rThumb.innerHTML = safeImg
+      ? `<img src="${safeImg}" onerror="this.parentElement.innerHTML='📖'" alt="cover" />`
+      : '📖';
     document.getElementById('importResultTitle').textContent = title || '(No title found)';
+    const chapterSuffix = chaptersTotal != null ? ` · ${chaptersTotal} ch` : '';
     document.getElementById('importResultAuthor').textContent = author
-      ? `by ${author}${altTitles.length ? ` · ${altTitles.length} alt title${altTitles.length > 1 ? 's' : ''} found` : ''}`
-      : altTitles.length ? `${altTitles.length} alt title${altTitles.length > 1 ? 's' : ''} found` : '(Author not detected)';
+      ? `by ${author}${altTitles.length ? ` · ${altTitles.length} alt title${altTitles.length > 1 ? 's' : ''} found` : ''}${chapterSuffix}`
+      : altTitles.length ? `${altTitles.length} alt title${altTitles.length > 1 ? 's' : ''} found${chapterSuffix}` : `(Author not detected)${chapterSuffix}`;
     document.getElementById('importResultTags').innerHTML = tags.length
       ? tags.slice(0,15).map(t => `<span class="tag-pill">${escHtml(t)}</span>`).join('')
       : '';
@@ -4252,8 +4549,8 @@
     document.getElementById('importResult').classList.remove('hidden');
     const btn = document.getElementById('importFetchBtn');
     btn.disabled = false;
-    btn.textContent = 'Use this \u0026 Edit';
-    btn.onclick = () => applyScrapedData({ title, image, author, description, tags, altTitles, url });
+    btn.textContent = 'Use this & Edit';
+    btn.onclick = () => applyScrapedData({ title, image, author, description, tags, altTitles, chaptersTotal, url });
   }
 
   function useManualFill() {
@@ -4264,13 +4561,16 @@
     applyScrapedData({ title, author, image, description: '', url });
   }
 
-  function applyScrapedData({ title, image, author, description, tags, altTitles, url }) {
+  function applyScrapedData({ title, image, author, description, tags, altTitles, chaptersTotal, url }) {
     closeImportModal();
     openModal();
     document.getElementById('fTitle').value = title || '';
     document.getElementById('fAuthor').value = author || '';
     document.getElementById('fLink').value = url || '';
     document.getElementById('fThumb').value = image || '';
+    if (chaptersTotal != null && !document.getElementById('fChaptersTotal').value) {
+      document.getElementById('fChaptersTotal').value = chaptersTotal;
+    }
     document.getElementById('fTags').value = (tags || []).join(', ');
     renderTagsPreview();
     previewThumb();
@@ -4330,8 +4630,9 @@
           // JSON backup — restore directly without re-scraping
           let added = 0;
           parsed.forEach(p => {
-            if (p.id && p.title && !entries.find(e => e.id === p.id)) {
-              entries.push(p);
+            const clean = sanitizeEntry(p);
+            if (clean && clean.title && !entries.find(e => e.id === clean.id)) {
+              entries.push(clean);
               added++;
             }
           });
@@ -4353,10 +4654,11 @@
   async function fetchEntryData(rawUrl) {
     const dummy = { textContent: '' }; // satisfy fetchViaProxy progress arg
     let result = null;
-    result = await tryMangaDex(rawUrl).catch(() => null);
-    if (!result) result = await tryNH(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
-    if (!result) result = await tryAniList(rawUrl).catch(() => null);
-    if (!result) result = await tryHitomi(rawUrl).catch(e => { if (e.notFound) throw e; return null; });
+    result = await tryMangaDex(rawUrl).catch(e => { if (e.unauthenticated) throw e; return null; });
+    if (!result) result = await tryNH(rawUrl).catch(e => { if (e.notFound || e.unauthenticated) throw e; return null; });
+    if (!result) result = await tryAniList(rawUrl).catch(e => { if (e.unauthenticated) throw e; return null; });
+    if (!result) result = await tryHitomi(rawUrl).catch(e => { if (e.notFound || e.unauthenticated) throw e; return null; });
+    if (!result) result = await tryAtsu(rawUrl).catch(e => { if (e.notFound || e.unauthenticated) throw e; return null; });
     if (!result) {
       try {
         const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
@@ -4481,7 +4783,7 @@
           logEl.querySelector('.batch-log-text').innerHTML = `Skipped (duplicate): <strong>${escHtml(title)}</strong>`;
           skipped++;
         } else {
-          const entry = {
+          const entry = sanitizeEntry({
             id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
             title,
             author: result.author || '',
@@ -4495,15 +4797,25 @@
             tags: result.tags || [],
             altTitles: result.altTitles || [],
             dateAdded: Date.now(),
-          };
-          entries.push(entry);
-          save();
-          if (settings.cacheImages && entry.thumb) cacheThumb(entry.id, entry.thumb);
-          logEl.querySelector('.batch-log-icon').textContent = '✅';
-          logEl.querySelector('.batch-log-text').innerHTML = `Added: <strong>${escHtml(title)}</strong>`;
-          added++;
+          });
+          if (entry) {
+            entries.push(entry);
+            save();
+            if (settings.cacheImages && entry.thumb) cacheThumb(entry.id, entry.thumb);
+            logEl.querySelector('.batch-log-icon').textContent = '✅';
+            logEl.querySelector('.batch-log-text').innerHTML = `Added: <strong>${escHtml(title)}</strong>`;
+            added++;
+          }
         }
       } catch (err) {
+        if (err.unauthenticated) {
+          handleSessionExpired();
+          logEl.querySelector('.batch-log-icon').textContent = '⚠️';
+          logEl.querySelector('.batch-log-text').innerHTML = `Session expired — stopped at <span style="opacity:0.6">${escHtml(displayInput)}</span>. Please log in again.`;
+          failed++;
+          batchAborted = true;
+          break;
+        }
         const icon = err.cfDetected ? '🛡️' : '❌';
         const msg = err.cfDetected ? 'Cloudflare protected — skipped'
           : err.notFound ? `Not found (404) — skipped`
@@ -4531,6 +4843,65 @@
     renderEntries();
   }
 
+  // ── Session Keep-Alive & Expiry Handling ──
+  let _heartbeatTimer = null;
+  function startSessionHeartbeat() {
+    if (_heartbeatTimer) return;
+    if (window.location.protocol === 'file:' || !window.location.host) return;
+
+    async function pingSession() {
+      try {
+        const res = await fetch('/api/auth/status', { cache: 'no-store' });
+        if (res.ok) {
+          const d = await res.json();
+          if (!d.authenticated) {
+            handleSessionExpired();
+          }
+        } else if (res.status === 401) {
+          handleSessionExpired();
+        }
+      } catch (_) {}
+    }
+
+    // Ping every 5 minutes — resets the rolling session window while the user has the app open
+    _heartbeatTimer = setInterval(pingSession, 5 * 60 * 1000);
+
+    // Check immediately if returning to tab after being away
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        pingSession();
+      }
+    });
+
+    // Also ping on user interaction if more than 5 minutes since last activity
+    let lastUserPing = Date.now();
+    ['click', 'keydown'].forEach(evt => {
+      window.addEventListener(evt, () => {
+        if (Date.now() - lastUserPing > 5 * 60 * 1000) {
+          lastUserPing = Date.now();
+          pingSession();
+        }
+      }, { passive: true });
+    });
+  }
+
+  function handleSessionExpired() {
+    let banner = document.getElementById('sessionExpiredBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'sessionExpiredBanner';
+      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#dc2626;color:#ffffff;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 4px 12px rgba(0,0,0,0.35);font-size:14px;font-weight:500;';
+      banner.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:18px;">⚠️</span>
+          <span>Your session has expired. Please log in again to continue saving changes.</span>
+        </div>
+        <button style="background:#ffffff;color:#dc2626;border:none;padding:6px 16px;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px;transition:opacity 0.2s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'" onclick="window.location.href='/login'">Log In</button>
+      `;
+      document.body.appendChild(banner);
+    }
+  }
+
   // ── Init ──
   async function init() {
     try {
@@ -4542,6 +4913,7 @@
       currentUser.id       = d.userId;
       currentUser.username = d.username;
       currentUser.isAdmin  = d.isAdmin;
+      startSessionHeartbeat();
 
       // One-time migration: if old un-namespaced keys exist and namespaced ones don't,
       // move the data over so existing users keep their library after the update.
@@ -4581,7 +4953,7 @@
 
         if (serverHasEntries) {
           // Server is source of truth
-          entries = serverData.entries;
+          entries = serverData.entries.map(sanitizeEntry).filter(Boolean);
           localStorage.setItem(storeKey('mangaEntries'), JSON.stringify(entries));
 
           if (serverData.settings && Object.keys(serverData.settings).length > 0) {
@@ -4599,7 +4971,7 @@
           }
         } else if (localHasEntries) {
           // Server has no entries, but this browser does -> auto-migrate to server!
-          entries = localEntries;
+          entries = localEntries.map(sanitizeEntry).filter(Boolean);
           settings = { ...DEFAULT_SETTINGS, ...(localSettings || {}) };
           if (localView) currentView = localView;
 

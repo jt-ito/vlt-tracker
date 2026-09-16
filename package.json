@@ -1,6 +1,6 @@
 {
   "name": "vlt-tracker",
-  "version": "1.0.13",
+  "version": "2.0.0",
   "description": "VLT Tracker — a local manga/doujin library tracker with import, tagging, and API integrations",
   "main": "main.js",
   "author": "jt-ito <jt-ito@users.noreply.github.com>",
@@ -70,10 +70,16 @@
       "artifactName": "VLT-Tracker-Portable-${version}.exe"
     },
     "mac": {
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "linux": {
-      "target": ["AppImage", "deb"]
+      "target": [
+        "AppImage",
+        "deb"
+      ]
     }
   }
 }
